@@ -30,6 +30,11 @@ internal static class SelfTest
             FailedProbeKeepsTargetAddress();
             SuspendFreezesCountersAndAlerts();
             PerHostFailureThreshold();
+            ThresholdLoweredMidOutage();
+            ConcurrencyCeilingFollowsSettings();
+            AlertSecretsAndValidation();
+            AlertConfigSurvivesAutosave(scratch);
+            WebhookDeliversATransition();
         }
         finally
         {
@@ -89,7 +94,10 @@ internal static class SelfTest
             reloaded.Targets.First(t => t.Name == "lan").FailuresBeforeDown is null);
         Check("ini: global threshold unaffected", reloaded.Settings.FailuresBeforeDown == 3);
 
-        // A hand-edited nonsense value must be clamped, not carried through as-is.
+        // Hand-edited nonsense must be clamped, not carried through as-is — and that applies to
+        // every per-target override, not just the threshold. Ttl=0 is the one that bites: it makes
+        // PingOptions throw on construction, which lands in the scheduler's catch-all and shows up
+        // as a permanent, unexplained TIMEOUT rather than as a configuration problem.
         File.WriteAllText(thresholdPath, """
             [Settings]
             FailuresBeforeDown=3
@@ -97,10 +105,19 @@ internal static class SelfTest
             [Target:silly]
             Address=1.2.3.4
             FailuresBeforeDown=0
+            Ttl=0
+            IntervalMs=1
+            TimeoutMs=99999999
+            PayloadBytes=-5
             """, Encoding.UTF8);
 
-        Check("ini: hand-edited threshold is clamped",
-            ConfigStore.Load(thresholdPath).Targets[0].FailuresBeforeDown == 1);
+        var silly = ConfigStore.Load(thresholdPath).Targets[0];
+
+        Check("ini: hand-edited threshold is clamped", silly.FailuresBeforeDown == 1);
+        Check("ini: per-target ttl clamped above zero", silly.Ttl == 1);
+        Check("ini: per-target interval clamped up to the floor", silly.IntervalMs == 250);
+        Check("ini: per-target timeout clamped to the ceiling", silly.TimeoutMs == 60_000);
+        Check("ini: per-target payload cannot go negative", silly.PayloadBytes == 0);
     }
 
     private static void HandEditedFileSurvives(string dir)
@@ -441,6 +458,229 @@ internal static class SelfTest
 
         tolerant.Dispose();
         strict.Dispose();
+    }
+
+    /// <summary>
+    /// Regression guard. Lowering the alert threshold while a target is already failing must still
+    /// announce the outage.
+    /// <para>
+    /// The original bug: the down transition fired on <c>streak == threshold</c> while recovery
+    /// tested <c>streak &gt;= threshold</c>. Drop the threshold from 5 to 3 with a target sitting
+    /// at four consecutive failures and the streak has already passed 3 without ever equalling it,
+    /// so no down notification ever fires — but the recovery one still does. A "recovered" alert
+    /// for an outage you were never told about is worse than no alert at all.
+    /// </para>
+    /// </summary>
+    private static void ThresholdLoweredMidOutage()
+    {
+        var target = new PingTarget(new TargetConfig { Name = "wan", Address = "10.2.10.10" }, new Settings());
+        var now = DateTimeOffset.Now;
+
+        StateTransition? fired = null;
+        for (var i = 1; i <= 4; i++)
+            fired ??= target.Record(ProbeResult.Fail(TargetStatus.Timeout, 1000 + i, now), 5);
+
+        Check("threshold: silent below the original value", fired is null);
+
+        // The user lowers it to 3 from the settings dialog, mid-outage.
+        fired = target.Record(ProbeResult.Fail(TargetStatus.Timeout, 2000, now), 3);
+        Check("threshold: lowering it mid-outage still declares down", fired is { Up: false, Threshold: 3 });
+
+        var again = target.Record(ProbeResult.Fail(TargetStatus.Timeout, 2100, now), 3);
+        Check("threshold: down fires once per outage", again is null);
+
+        var recovered = target.Record(
+            ProbeResult.Ok(4, System.Net.IPAddress.Loopback, 3000, now), 3);
+        Check("threshold: recovery pairs with the down that fired", recovered is { Up: true });
+
+        // A second OK is not a second recovery.
+        var quiet = target.Record(ProbeResult.Ok(4, System.Net.IPAddress.Loopback, 4000, now), 3);
+        Check("threshold: no recovery without a preceding down", quiet is null);
+
+        target.Dispose();
+    }
+
+    /// <summary>
+    /// The concurrency ceiling must track <see cref="Settings.MaxConcurrent"/> and must not be
+    /// rebuilt when it has not changed.
+    /// <para>
+    /// The original bug compared against <see cref="SemaphoreSlim.CurrentCount"/>, which reports
+    /// permits still <em>available</em> rather than the configured maximum. Any settings apply that
+    /// caught a probe in flight therefore looked like a change and swapped the semaphore out from
+    /// under it; the probe then released a semaphore it never acquired, throwing inside its
+    /// <c>finally</c> and leaking the outstanding-probe count upward for the life of the process.
+    /// </para>
+    /// <para>
+    /// The in-flight half of that is fixed by construction — a probe now releases the instance it
+    /// captured — which leaves the ceiling itself as the part worth asserting here.
+    /// </para>
+    /// </summary>
+    private static void ConcurrencyCeilingFollowsSettings()
+    {
+        var scheduler = new ProbeScheduler(new Settings { MaxConcurrent = 4 });
+
+        Check("concurrency: starts at the configured ceiling", scheduler.AvailableConcurrency == 4);
+
+        scheduler.ApplySettings(new Settings { MaxConcurrent = 4 });
+        Check("concurrency: re-applying an unchanged ceiling is a no-op", scheduler.AvailableConcurrency == 4);
+
+        scheduler.ApplySettings(new Settings { MaxConcurrent = 9 });
+        Check("concurrency: a changed ceiling takes effect", scheduler.AvailableConcurrency == 9);
+
+        _ = scheduler.DisposeAsync().AsTask().Wait(2000);
+    }
+
+    /// <summary>
+    /// The webhook path, end to end, against a real listener on loopback.
+    /// <para>
+    /// Compiling is not evidence that an alert can leave the process. This queues a transition
+    /// through the live dispatcher and asserts that a correctly shaped JSON body arrives at the
+    /// other end — the one thing a user cannot check without an outage.
+    /// </para>
+    /// </summary>
+    private static void WebhookDeliversATransition()
+    {
+        var prefix = $"http://localhost:{FreePort()}/";
+
+        using var listener = new System.Net.HttpListener();
+        listener.Prefixes.Add(prefix);
+
+        try
+        {
+            listener.Start();
+        }
+        catch (System.Net.HttpListenerException)
+        {
+            // Binding a listener can be refused by policy on a locked-down machine. That is not a
+            // failure of the code under test, but it must not read as a silent pass either.
+            Check("alerts: SKIPPED — could not bind a local listener", false);
+            return;
+        }
+
+        string? body = null;
+        using var arrived = new ManualResetEventSlim(false);
+
+        _ = Task.Run(async () =>
+        {
+            var context = await listener.GetContextAsync().ConfigureAwait(false);
+            using (var reader = new StreamReader(context.Request.InputStream, Encoding.UTF8))
+                body = await reader.ReadToEndAsync().ConfigureAwait(false);
+
+            context.Response.StatusCode = 200;
+            context.Response.Close();
+            arrived.Set();
+        });
+
+        var settings = new AlertSettings { WebhookEnabled = true, WebhookUrl = prefix, MinIntervalSeconds = 0 };
+        settings.Validate();
+        Check("alerts: a usable webhook url stays enabled", settings.WebhookEnabled);
+
+        var dispatcher = new AlertDispatcher(settings);
+        dispatcher.Enqueue(
+            new StateTransition("gateway", Up: false, DateTimeOffset.Now, TimeSpan.Zero, TargetStatus.Timeout, 3),
+            "10.1.10.1");
+
+        Check("alerts: webhook actually delivered", arrived.Wait(TimeSpan.FromSeconds(10)));
+        Check("alerts: payload names the target", Contains(body, "\"target\":\"gateway\""));
+        Check("alerts: payload carries the event", Contains(body, "\"event\":\"down\""));
+        Check("alerts: payload carries the probed address", Contains(body, "10.1.10.1"));
+        Check("alerts: payload carries a human summary", Contains(body, "\"text\":\""));
+
+        _ = dispatcher.DisposeAsync().AsTask().Wait(8000);
+        listener.Stop();
+
+        static bool Contains(string? haystack, string needle) =>
+            haystack?.Contains(needle, StringComparison.Ordinal) == true;
+    }
+
+    /// <summary>
+    /// Credential handling and the "enabled but unusable" case.
+    /// <para>
+    /// A sink that is switched on but has nowhere to send is the failure mode that matters: the
+    /// user believes they are covered, and nothing ever arrives to prove otherwise.
+    /// </para>
+    /// </summary>
+    private static void AlertSecretsAndValidation()
+    {
+        const string secret = "correct-horse-battery-staple";
+
+        var stored = ProtectedValue.Protect(secret);
+        Check("alerts: secret is not stored in the clear",
+            !stored.Contains(secret, StringComparison.Ordinal));
+        Check("alerts: secret round-trips", ProtectedValue.Unprotect(stored) == secret);
+        Check("alerts: a hand-typed plaintext value still works",
+            ProtectedValue.Unprotect("typed-by-hand") == "typed-by-hand");
+        Check("alerts: empty stays empty", ProtectedValue.Protect("").Length == 0);
+        Check("alerts: undecryptable blob yields empty, not garbage",
+            ProtectedValue.Unprotect("dpapi:bm90LWEtcmVhbC1ibG9i").Length == 0);
+
+        var badUrl = new AlertSettings { WebhookEnabled = true, WebhookUrl = "definitely not a url" };
+        badUrl.Validate();
+        Check("alerts: unusable webhook url disables the sink", !badUrl.WebhookEnabled);
+
+        var noRecipient = new AlertSettings { EmailEnabled = true, SmtpHost = "smtp.example.com" };
+        noRecipient.Validate();
+        Check("alerts: email with no recipient disables the sink", !noRecipient.EmailEnabled);
+
+        var clamped = new AlertSettings { SmtpPort = 0, MinIntervalSeconds = -5, TimeoutMs = 1 };
+        clamped.Validate();
+        Check("alerts: values clamped into range",
+            clamped.SmtpPort >= 1 && clamped.MinIntervalSeconds >= 0 && clamped.TimeoutMs >= 1000);
+    }
+
+    /// <summary>
+    /// Alert configuration survives a round trip, and — the part with real teeth — survives an
+    /// autosave that knows nothing about it.
+    /// <para>
+    /// The board rewrites the config whenever a target is added or edited, and those paths carry no
+    /// alert settings. Without the preserve-on-null contract in <see cref="ConfigStore.Save"/>, the
+    /// first such save would silently delete the user's webhook and SMTP credentials.
+    /// </para>
+    /// </summary>
+    private static void AlertConfigSurvivesAutosave(string dir)
+    {
+        var path = Path.Combine(dir, "alerts.ini");
+        var targets = new List<TargetConfig> { new() { Name = "a", Address = "1.1.1.1" } };
+
+        var alerts = new AlertSettings
+        {
+            WebhookEnabled = true,
+            WebhookUrl = "https://hooks.example.com/abc",
+            SmtpPassword = "s3cret-password",
+            MinIntervalSeconds = 120,
+            NotifyOnRecovery = false,
+        };
+
+        ConfigStore.Save(path, new Settings(), targets, alerts);
+        var loaded = ConfigStore.Load(path);
+
+        Check("alerts: config round-trips", loaded.Alerts.WebhookUrl == "https://hooks.example.com/abc"
+                                            && loaded.Alerts.MinIntervalSeconds == 120
+                                            && !loaded.Alerts.NotifyOnRecovery);
+
+        Check("alerts: password never hits the file in the clear",
+            !File.ReadAllText(path).Contains("s3cret-password", StringComparison.Ordinal));
+        Check("alerts: password decrypts on load",
+            ProtectedValue.Unprotect(loaded.Alerts.SmtpPassword) == "s3cret-password");
+
+        // The autosave path: same file, no alert settings supplied.
+        ConfigStore.Save(path, new Settings(), targets);
+        var after = ConfigStore.Load(path);
+
+        Check("alerts: an autosave without alert settings preserves them",
+            after.Alerts.WebhookUrl == "https://hooks.example.com/abc");
+        Check("alerts: an autosave preserves the credential too",
+            ProtectedValue.Unprotect(after.Alerts.SmtpPassword) == "s3cret-password");
+    }
+
+    /// <summary>A port the OS has just confirmed is free, so the test does not collide with a real service.</summary>
+    private static int FreePort()
+    {
+        var probe = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+        probe.Start();
+        var port = ((System.Net.IPEndPoint)probe.LocalEndpoint).Port;
+        probe.Stop();
+        return port;
     }
 
     private static void Check(string name, bool ok)

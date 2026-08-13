@@ -29,7 +29,25 @@ dist/PingBoard.App.exe --config C:\path\to\board.ini
 ```
 
 `--config` also keys the single-instance guard, so two different boards can run side by side while
-relaunching the same one just surfaces the window already open.
+relaunching the same one just surfaces the window already open. `--minimized` starts in the tray
+with no window, which is what the autostart entry uses.
+
+### Building the installer
+
+`dist/` runs as-is if you just copy it. For something to hand to someone else, there is an
+[Inno Setup](https://jrsoftware.org/isinfo.php) script:
+
+```bash
+dotnet publish src/PingBoard.App -c Release -r win-x64 -o dist
+"%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" installer\PingBoard.iss
+```
+
+It installs per user into `%LocalAppData%\Programs`, so there is no UAC prompt to install or
+update, and the optional "start when I sign in" checkbox writes the same `HKCU` value the in-app
+toggle does — one setting, not two that can disagree.
+
+The output is unsigned, so SmartScreen will warn until you sign it. That is a property of the
+certificate, not of the packaging: no installer format avoids it.
 
 ### The headless engine
 
@@ -38,7 +56,7 @@ structurally — it is a separate project — so the part that has to be correct
 stress-tested without XAML in the way.
 
 ```bash
-dotnet run --project src/PingBoard.Harness -- --selftest        # 58 assertions
+dotnet run --project src/PingBoard.Harness -- --selftest        # 99 assertions
 dotnet run --project src/PingBoard.Harness -- board.ini --seconds 300
 ```
 
@@ -84,6 +102,41 @@ would otherwise read as a permanently dead target. A completed TCP handshake als
 an echo reply does, and a *refused* connection is reported separately from a timeout — it means the
 host is up and the port is closed.
 
+### Alerting
+
+A tray balloon only reaches you while you are sitting in front of the machine — which is exactly
+when you would have noticed the board turn red anyway. An optional `[Alerts]` section sends
+transitions somewhere that reaches you when you are not.
+
+```ini
+[Alerts]
+WebhookEnabled=true
+WebhookUrl=https://hooks.example.com/abc      ; POSTs JSON; ntfy, Home Assistant, Discord, Slack
+MinIntervalSeconds=60                          ; suppress repeat alerts per target; 0 disables
+NotifyOnRecovery=true
+
+EmailEnabled=false
+SmtpHost=smtp.example.com
+SmtpPort=587
+SmtpUser=me@example.com
+SmtpPassword=                                  ; DPAPI-encrypted on the next save
+EmailFrom=me@example.com
+EmailTo=me@example.com
+```
+
+Delivery happens on a background worker behind a bounded queue that drops oldest. That is the
+whole point: an unreachable SMTP server blocks for its full TCP timeout, and sending inline from
+the probe path would mean an outage on the *alerting* side degrading the thing raising the alerts.
+
+`SmtpPassword` and `WebhookAuthorization` are encrypted with DPAPI under the current Windows user,
+so a config that ends up in a sync folder, a backup or a repo carries no usable credential. The
+flip side is deliberate: copy the file to another machine and the secret must be re-entered there.
+A password typed in as plaintext by hand still works, and is encrypted the next time the board
+saves.
+
+A sink that fails is reported in the status bar. An alerting path that breaks quietly is the worst
+state this app can be in — the board looks healthy and you believe you will be told when it is not.
+
 ---
 
 ## What the columns mean
@@ -105,7 +158,17 @@ Hovering shows the raw `IPStatus`, which distinguishes "nothing answered" from "
 said it could not deliver".
 
 Closing the window hides to the tray; **Exit** is on the tray menu. Notifications fire only on
-transitions (down / recovered with duration), never on individual failed probes.
+transitions (down / recovered with duration), never on individual failed probes, and each one
+replaces the last rather than stacking up a transcript of how you got here.
+
+**Start with Windows** is in the ⚙ menu — a per-user `HKCU\...\Run` entry, so no elevation and no
+scheduled task. It launches with `--minimized`, straight to the tray. A monitor you have to
+remember to start is a monitor that is not running on the morning something breaks.
+
+The **Theme** submenu carries Follow Windows / Light / Dark, plus **Matrix** — green phosphor on a
+black plate, monospaced throughout. Failure states stay chromatically distinct there rather than
+collapsing into shades of green, because a board you cannot read at a glance has lost the one
+thing it is for.
 
 ---
 

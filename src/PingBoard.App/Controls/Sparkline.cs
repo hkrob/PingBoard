@@ -170,10 +170,6 @@ public sealed partial class Sparkline : Panel
             Children.Add(new Rectangle { RadiusX = 0.5, RadiusY = 0.5 });
     }
 
-    private Brush Resolve(string key, Windows.UI.Color fallback)
-    {
-        if (Application.Current.Resources.TryGetValue(key, out var value) && value is Brush brush)
-            return brush;
-        return new SolidColorBrush(fallback);
-    }
+    private static Brush Resolve(string key, Windows.UI.Color fallback) =>
+        BoardPalette.Resolve(key, fallback);
 }

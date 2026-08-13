@@ -31,7 +31,19 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     private ProbeScheduler _scheduler;
     private SystemWatcher? _watcher;
     private TransitionLog? _log;
+    private AlertDispatcher? _alerts;
     private Settings _settings;
+
+    /// <summary>
+    /// Alert configuration, or null when it could not be read.
+    /// <para>
+    /// Null is meaningful rather than merely absent: <see cref="ConfigStore.Save"/> treats it as
+    /// "leave the [Alerts] section on disk alone". If a config fails to load and the user then
+    /// edits a target, the resulting autosave must not replace their webhook and SMTP credentials
+    /// with the empty defaults we fell back to.
+    /// </para>
+    /// </summary>
+    private AlertSettings? _alertSettings;
     private bool _countersDirty;
     private bool _disposed;
 
@@ -54,6 +66,13 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
     [ObservableProperty] public partial string ConfigPath { get; private set; } = "";
     [ObservableProperty] public partial string StatusText { get; private set; } = "";
+
+    /// <summary>
+    /// Wall-clock time for the status bar. Updated from the existing refresh tick rather than a
+    /// timer of its own — the setter is change-checked, so redundant ticks within the same second
+    /// raise no notification and repaint nothing.
+    /// </summary>
+    [ObservableProperty] public partial string Clock { get; private set; } = "";
     [ObservableProperty] public partial string BannerText { get; private set; } = "";
     [ObservableProperty] public partial bool BannerVisible { get; private set; }
     [ObservableProperty] public partial SortKey Sort { get; private set; } = SortKey.Name;
@@ -82,11 +101,16 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         try
         {
             config = ConfigStore.Load(configPath);
+            _alertSettings = config.Alerts;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             ShowBanner($"Could not read {Path.GetFileName(configPath)} — {ex.Message}");
             config = new BoardConfig(new Settings(), []);
+
+            // Null, not the fallback defaults: a later autosave must preserve the alert section we
+            // failed to read rather than overwrite it with blanks.
+            _alertSettings = null;
         }
 
         _settings = config.Settings;
@@ -107,6 +131,11 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         }
 
         _log = _settings.LogEnabled ? new TransitionLog(ResolveLogPath()) : null;
+
+        // Constructed unconditionally, even with every sink disabled: Enqueue is a cheap early
+        // return in that case, and having the dispatcher already there means enabling a sink from
+        // the settings dialog takes effect immediately instead of at the next config reload.
+        _alerts = new AlertDispatcher(_alertSettings ?? new AlertSettings());
 
         _watcher = new SystemWatcher(_scheduler, _settings);
         _watcher.Start();
@@ -142,6 +171,14 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         _scheduler.SuspendChanged -= OnSuspendChanged;
         await _scheduler.DisposeAsync().ConfigureAwait(true);
 
+        // After the scheduler, so a transition raised during its drain is still queued, and the
+        // dispatcher's own shutdown gets its brief window to flush it.
+        if (_alerts is not null)
+        {
+            await _alerts.DisposeAsync().ConfigureAwait(true);
+            _alerts = null;
+        }
+
         _log?.Dispose();
         _log = null;
     }
@@ -164,10 +201,19 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             else idle++;
         }
 
+        Clock = DateTime.Now.ToString("HH:mm:ss", System.Globalization.CultureInfo.CurrentCulture);
+
+        // An alert sink that fails quietly is the worst state this app can be in: the board looks
+        // healthy, and the user believes they will be told when it is not.
+        var alertProblem = _alerts?.Health() is { Ok: false, Error: { } error }
+            ? " · ⚠ " + (error.Length > 60 ? error[..60] + "…" : error)
+            : "";
+
         StatusText = _scheduler.IsSuspended
             ? $"Paused — {_scheduler.SuspendReason}"
             : $"{Rows.Count} targets · {up} up · {down} down"
-              + (idle > 0 ? $" · {idle} idle" : "");
+              + (idle > 0 ? $" · {idle} idle" : "")
+              + alertProblem;
 
         // Re-sorting on a status-dependent key would make rows jump under the cursor at 4 Hz.
         // Sorting is applied on demand instead, when the user picks a column.
@@ -178,8 +224,30 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         _countersDirty = true;
         _log?.Write(transition);
 
+        // Queued, not sent, and deliberately from this threadpool thread rather than the
+        // dispatcher: an unreachable SMTP server blocks for its full TCP timeout, and putting that
+        // on the UI thread would freeze the board every time the network it monitors goes down.
+        _alerts?.Enqueue(transition, AddressOf(transition.TargetName));
+
         // Arrives on a threadpool thread; the toast and any UI work must hop to the dispatcher.
         _dispatcher.TryEnqueue(() => Transition?.Invoke(transition));
+    }
+
+    /// <summary>
+    /// The address currently being probed for a target, for the alert payload.
+    /// <para>
+    /// Read from the scheduler rather than from <see cref="Rows"/>: this runs on a threadpool
+    /// thread, and <see cref="ObservableCollection{T}"/> is not safe to touch off the UI thread.
+    /// <see cref="ProbeScheduler.Targets"/> hands back a snapshot taken under its own lock.
+    /// </para>
+    /// </summary>
+    private string AddressOf(string targetName)
+    {
+        foreach (var target in _scheduler.Targets)
+            if (string.Equals(target.Config.Name, targetName, StringComparison.OrdinalIgnoreCase))
+                return target.Snapshot().DisplayIp;
+
+        return "";
     }
 
     private void OnSuspendChanged(bool suspended, string reason) =>
@@ -188,6 +256,12 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             if (suspended) ShowBanner($"Probing paused — {reason}. Counters are frozen.");
             else HideBanner();
         });
+
+    /// <summary>Asks every row to re-resolve its status brush after a palette change.</summary>
+    public void RefreshStatusBrushes()
+    {
+        foreach (var row in Rows) row.RefreshStatusBrush();
+    }
 
     public void ShowBanner(string text)
     {
@@ -333,6 +407,23 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         SaveConfig();
     }
 
+    /// <summary>Alert configuration for the settings dialog to edit.</summary>
+    public AlertSettings AlertSettings => (_alertSettings ??= new AlertSettings()).Clone();
+
+    public void ApplyAlertSettings(AlertSettings alerts)
+    {
+        alerts.Validate();
+        _alertSettings = alerts;
+        _alerts?.ApplySettings(alerts);
+        SaveConfig();
+    }
+
+    /// <summary>
+    /// Sends one alert now and reports what happened, for a Test button. Returns null on success.
+    /// </summary>
+    public Task<string?> SendTestAlertAsync(AlertSettings alerts, CancellationToken ct) =>
+        _alerts?.SendTestAsync(alerts, ct) ?? Task.FromResult<string?>("the engine is not running");
+
     // ---------------------------------------------------------------- persistence
 
     public void SaveConfig()
@@ -341,7 +432,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
         try
         {
-            ConfigStore.Save(ConfigPath, _settings, Rows.Select(r => r.Target.Config));
+            ConfigStore.Save(ConfigPath, _settings, Rows.Select(r => r.Target.Config), _alertSettings);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {

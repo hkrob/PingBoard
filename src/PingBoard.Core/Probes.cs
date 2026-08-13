@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
@@ -49,7 +50,6 @@ public sealed class IcmpProbe : IProbe
         }
 
         var pingOptions = new PingOptions(options.Ttl, dontFragment: false);
-        var start = Environment.TickCount64;
 
         try
         {
@@ -79,7 +79,6 @@ public sealed class IcmpProbe : IProbe
         {
             // A PingException generally means the local stack could not send at all. That is not a
             // statement about the target, so record it as a timeout rather than "unreachable".
-            _ = start;
             return ProbeResult.Fail(TargetStatus.Timeout, Environment.TickCount64, DateTimeOffset.Now,
                                     IPStatus.Unknown, address);
         }
@@ -109,7 +108,13 @@ public sealed class TcpProbe : IProbe
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeoutCts.CancelAfter(options.TimeoutMs);
 
-        var start = Environment.TickCount64;
+        // Stopwatch, not Environment.TickCount64. TickCount64 is the right clock for *scheduling*
+        // — monotonic and cheap — but its resolution is the system timer, ~15.6 ms by default. A
+        // LAN handshake completes well inside one tick, so measuring with it reports every local
+        // TCP target as 0 ms or 15 ms and makes avg/min/max/jitter meaningless for exactly the
+        // hosts that had to use TCP because they drop ICMP. ICMP is unaffected: the OS supplies
+        // reply.RoundtripTime.
+        var start = Stopwatch.GetTimestamp();
         TcpClient? client = null;
 
         try
@@ -117,7 +122,7 @@ public sealed class TcpProbe : IProbe
             client = new TcpClient(address.AddressFamily);
             await client.ConnectAsync(address, options.Port, timeoutCts.Token).ConfigureAwait(false);
 
-            var rtt = (int)(Environment.TickCount64 - start);
+            var rtt = (int)Math.Round(Stopwatch.GetElapsedTime(start).TotalMilliseconds);
             return ProbeResult.Ok(rtt, address, Environment.TickCount64, DateTimeOffset.Now);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)

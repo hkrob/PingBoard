@@ -91,6 +91,14 @@ public sealed partial class MainWindow : Window
             Notifications.Initialize();
             _tray = new TrayIcon(this);
 
+            // A minimized start with no tray icon would leave the app running with no way to reach
+            // it — invisible, and apparently unresponsive. Showing the window is the lesser evil.
+            if (Program.StartMinimized && !_tray.IsVisible)
+            {
+                BringToFront();
+                Vm.ShowBanner("Started minimized, but the tray icon could not be created — showing the window instead.");
+            }
+
             // Keep the tray tooltip current, so the up/down tally is readable on hover without
             // restoring the window.
             Vm.PropertyChanged += (_, e) =>
@@ -131,9 +139,33 @@ public sealed partial class MainWindow : Window
         RootGrid.RequestedTheme = theme switch
         {
             "Light" => ElementTheme.Light,
-            "Dark" => ElementTheme.Dark,
+            "Dark" or MatrixTheme.Name => ElementTheme.Dark,
             _ => ElementTheme.Default,
         };
+
+        // A theme is a cosmetic preference. Nothing here is worth taking the board down for, so a
+        // failure degrades to the standard palette rather than surfacing as an unrecoverable error.
+        try
+        {
+            if (theme == MatrixTheme.Name)
+            {
+                MatrixTheme.Apply(_board);
+                RootGrid.Background = MatrixTheme.PlateBrush;
+            }
+            else
+            {
+                MatrixTheme.Revert(_board);
+                RootGrid.ClearValue(Microsoft.UI.Xaml.Controls.Panel.BackgroundProperty);
+            }
+
+            _board.ApplyPalette();
+        }
+        catch (Exception ex)
+        {
+            CrashLog.Write(ex);
+            MatrixTheme.Revert(_board);
+            RootGrid.ClearValue(Microsoft.UI.Xaml.Controls.Panel.BackgroundProperty);
+        }
 
         // The caption buttons sit outside the XAML tree, so they need colouring separately or the
         // minimise/close glyphs stay light-on-light after a switch to the light theme.
@@ -142,8 +174,12 @@ public sealed partial class MainWindow : Window
         caption.ButtonInactiveBackgroundColor = Colors.Transparent;
 
         var isLight = RootGrid.ActualTheme == ElementTheme.Light;
-        caption.ButtonForegroundColor = isLight ? Colors.Black : Colors.White;
-        caption.ButtonHoverForegroundColor = isLight ? Colors.Black : Colors.White;
+        var glyph = MatrixTheme.IsApplied
+            ? MatrixTheme.CaptionForeground
+            : isLight ? Colors.Black : Colors.White;
+
+        caption.ButtonForegroundColor = glyph;
+        caption.ButtonHoverForegroundColor = glyph;
         caption.ButtonHoverBackgroundColor = isLight
             ? Color.FromArgb(24, 0, 0, 0)
             : Color.FromArgb(24, 255, 255, 255);
@@ -227,6 +263,13 @@ public sealed partial class MainWindow : Window
             CrashLog.Write(ex);
         }
     }
+
+    /// <summary>
+    /// Comes up hidden, for an autostart launch. Deliberately not Activate-then-Hide: that shows
+    /// a window on the screen for a frame or two at every login, which is precisely the behaviour
+    /// this is meant to avoid.
+    /// </summary>
+    public void StartHidden() => AppWindow.Hide();
 
     public void BringToFront()
     {

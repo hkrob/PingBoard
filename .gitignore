@@ -4,6 +4,9 @@ dist/
 .vs/
 *.user
 
+# Compiled installers
+installer/output/
+
 # Generated at runtime next to whatever config is in use
 *.state.ini
 *.ini.bak

@@ -100,7 +100,12 @@
                             <RadioMenuFlyoutItem x:Name="ThemeSystem" Text="Follow Windows" GroupName="theme" Click="OnThemeSystem" />
                             <RadioMenuFlyoutItem x:Name="ThemeLight"  Text="Light"          GroupName="theme" Click="OnThemeLight" />
                             <RadioMenuFlyoutItem x:Name="ThemeDark"   Text="Dark"           GroupName="theme" Click="OnThemeDark" />
+                            <RadioMenuFlyoutItem x:Name="ThemeMatrix" Text="Matrix"         GroupName="theme" Click="OnThemeMatrix" />
                         </MenuFlyoutSubItem>
+                        <MenuFlyoutSeparator />
+                        <ToggleMenuFlyoutItem x:Name="StartWithWindows"
+                                              Text="Start with Windows"
+                                              Click="OnToggleAutostart" />
                         <MenuFlyoutSeparator />
                         <MenuFlyoutItem Text="Settings…" Click="OnSettings">
                             <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE713;" /></MenuFlyoutItem.Icon>
@@ -123,6 +128,7 @@
         <!-- Column headers. Widths bind to the same shared object the rows use, which is what
              makes header/row misalignment structurally impossible. -->
         <Border Grid.Row="3"
+                x:Name="HeaderBar"
                 Background="{ThemeResource HeaderBackgroundBrush}"
                 BorderThickness="0,0,0,1"
                 BorderBrush="{ThemeResource RowSeparatorBrush}"
@@ -251,11 +257,20 @@
         </ListView>
 
         <Border Grid.Row="5"
+                x:Name="StatusBar"
                 BorderThickness="0,1,0,0"
                 BorderBrush="{ThemeResource RowSeparatorBrush}"
                 Padding="14,6">
             <Grid>
-                <TextBlock Text="{x:Bind Vm.StatusText, Mode=OneWay}" FontSize="12" Opacity="0.75" />
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <!-- Monospaced for the same reason the numeric columns are: a proportional
+                         clock reflows the text beside it on every tick. -->
+                    <TextBlock Text="{x:Bind Vm.Clock, Mode=OneWay}"
+                               FontFamily="{StaticResource NumericFont}"
+                               FontSize="12" Opacity="0.75" />
+                    <TextBlock Text="·" FontSize="12" Opacity="0.4" />
+                    <TextBlock Text="{x:Bind Vm.StatusText, Mode=OneWay}" FontSize="12" Opacity="0.75" />
+                </StackPanel>
                 <TextBlock HorizontalAlignment="Right" FontSize="12" Opacity="0.45"
                            Text="Double-click to edit · Ins add · Del remove · closing hides to tray" />
             </Grid>

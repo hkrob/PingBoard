@@ -47,6 +47,13 @@ public sealed partial class TargetRow : ObservableObject
     [ObservableProperty] public partial string Uptime { get; private set; } = "—";
     [ObservableProperty] public partial string Probe { get; private set; } = "icmp";
     [ObservableProperty] public partial string ThemeKey { get; private set; } = "StatusIdleBrush";
+
+    /// <summary>
+    /// Re-raises the status brush binding without the key having changed, so a palette swap
+    /// repaints the row. Used by the Matrix theme, where the key stays the same but the brush it
+    /// names is now a different object.
+    /// </summary>
+    public void RefreshStatusBrush() => OnPropertyChanged(nameof(ThemeKey));
     [ObservableProperty] public partial double RowOpacity { get; private set; } = 1.0;
 
     /// <summary>Bumped whenever history changes, so the sparkline knows to redraw.</summary>

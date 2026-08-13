@@ -94,6 +94,15 @@ public sealed class PingTarget : IDisposable
     private int _lastRttMs = ProbeResult.NoRtt;
     private int _consecutiveFailures;
     private long? _downSinceTick;
+
+    /// <summary>
+    /// True once the down transition has been raised for the current outage. This is what makes
+    /// "fire exactly once" hold, rather than testing the streak for exact equality with the
+    /// threshold: the threshold can be lowered mid-outage from the settings dialog, and a streak
+    /// that has already passed the new value would then never equal it — no down notification
+    /// would fire, yet the recovery one still would.
+    /// </summary>
+    private bool _downFired;
     private IPAddress? _resolved;
     private string? _reverseName;
 
@@ -188,8 +197,9 @@ public sealed class PingTarget : IDisposable
                 Counters.OkCount++;
                 Counters.LastOk = result.When;
 
-                var wasDown = _consecutiveFailures >= failuresBeforeDown;
+                var wasDown = _downFired;
                 _consecutiveFailures = 0;
+                _downFired = false;
 
                 if (!wasDown) { _downSinceTick = null; return null; }
 
@@ -209,10 +219,13 @@ public sealed class PingTarget : IDisposable
                 _consecutiveFailures++;
                 _downSinceTick ??= result.TickMs;
 
-                // Fire exactly once, on the probe that crosses the threshold.
-                if (_consecutiveFailures == failuresBeforeDown)
+                // Fire exactly once per outage, on the first probe at or past the threshold.
+                if (!_downFired && _consecutiveFailures >= failuresBeforeDown)
+                {
+                    _downFired = true;
                     return new StateTransition(
                         Config.Name, Up: false, result.When, TimeSpan.Zero, result.Status, failuresBeforeDown);
+                }
             }
 
             return null;
@@ -233,6 +246,7 @@ public sealed class PingTarget : IDisposable
             {
                 _consecutiveFailures = 0;
                 _downSinceTick = null;
+                _downFired = false;
             }
         }
     }
@@ -248,6 +262,7 @@ public sealed class PingTarget : IDisposable
             Counters.LastNok = null;
             _consecutiveFailures = 0;
             _downSinceTick = null;
+            _downFired = false;
         }
     }
 
@@ -272,7 +287,13 @@ public sealed class PingTarget : IDisposable
                 _reverseName = null;
             }
 
-            if (!config.Enabled) { _status = TargetStatus.Paused; _consecutiveFailures = 0; _downSinceTick = null; }
+            if (!config.Enabled)
+            {
+                _status = TargetStatus.Paused;
+                _consecutiveFailures = 0;
+                _downSinceTick = null;
+                _downFired = false;
+            }
             else if (_status == TargetStatus.Paused) _status = TargetStatus.Unknown;
         }
     }

@@ -19,12 +19,9 @@ public sealed partial class BrushKeyConverter : IValueConverter
 {
     public object Convert(object value, Type targetType, object parameter, string language)
     {
-        if (value is string key
-            && Application.Current.Resources.TryGetValue(key, out var resource)
-            && resource is Brush brush)
-        {
-            return brush;
-        }
+        // Resolved through BoardPalette rather than straight from the app resources, so a palette
+        // override (the Matrix theme) is picked up here too.
+        if (value is string key && BoardPalette.Find(key) is { } brush) return brush;
 
         return new SolidColorBrush(Colors.Gray);
     }

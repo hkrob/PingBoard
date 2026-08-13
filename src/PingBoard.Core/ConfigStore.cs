@@ -3,7 +3,12 @@ using System.Globalization;
 namespace PingBoard.Core;
 
 /// <summary>Everything loaded from one config file.</summary>
-public sealed record BoardConfig(Settings Settings, IReadOnlyList<TargetConfig> Targets);
+public sealed record BoardConfig(Settings Settings, IReadOnlyList<TargetConfig> Targets, AlertSettings Alerts)
+{
+    /// <summary>Convenience for callers that predate alerting and have no alert settings to supply.</summary>
+    public BoardConfig(Settings settings, IReadOnlyList<TargetConfig> targets)
+        : this(settings, targets, new AlertSettings()) { }
+}
 
 /// <summary>
 /// Maps <see cref="BoardConfig"/> to and from the user's <c>.ini</c>.
@@ -16,6 +21,7 @@ public sealed record BoardConfig(Settings Settings, IReadOnlyList<TargetConfig> 
 public static class ConfigStore
 {
     public const string SettingsSection = "Settings";
+    public const string AlertsSection = "Alerts";
     public const string TargetPrefix = "Target:";
 
     private const string HeaderComment =
@@ -55,6 +61,28 @@ public static class ConfigStore
         // The file may have been hand-edited into nonsense; clamp before anything uses it.
         settings.Validate();
 
+        var alerts = new AlertSettings();
+
+        if (ini.Find(AlertsSection) is { } a)
+        {
+            alerts.WebhookEnabled = a.GetBool(nameof(AlertSettings.WebhookEnabled), false);
+            alerts.WebhookUrl = a.GetString(nameof(AlertSettings.WebhookUrl), "");
+            alerts.WebhookAuthorization = a.GetString(nameof(AlertSettings.WebhookAuthorization), "");
+            alerts.EmailEnabled = a.GetBool(nameof(AlertSettings.EmailEnabled), false);
+            alerts.SmtpHost = a.GetString(nameof(AlertSettings.SmtpHost), "");
+            alerts.SmtpPort = a.GetInt(nameof(AlertSettings.SmtpPort), alerts.SmtpPort);
+            alerts.SmtpUseStartTls = a.GetBool(nameof(AlertSettings.SmtpUseStartTls), true);
+            alerts.SmtpUser = a.GetString(nameof(AlertSettings.SmtpUser), "");
+            alerts.SmtpPassword = a.GetString(nameof(AlertSettings.SmtpPassword), "");
+            alerts.EmailFrom = a.GetString(nameof(AlertSettings.EmailFrom), "");
+            alerts.EmailTo = a.GetString(nameof(AlertSettings.EmailTo), "");
+            alerts.MinIntervalSeconds = a.GetInt(nameof(AlertSettings.MinIntervalSeconds), alerts.MinIntervalSeconds);
+            alerts.NotifyOnRecovery = a.GetBool(nameof(AlertSettings.NotifyOnRecovery), true);
+            alerts.TimeoutMs = a.GetInt(nameof(AlertSettings.TimeoutMs), alerts.TimeoutMs);
+        }
+
+        alerts.Validate();
+
         var targets = new List<TargetConfig>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -81,23 +109,84 @@ public static class ConfigStore
                 Probe = kind,
                 Port = Math.Clamp(section.GetInt(nameof(TargetConfig.Port), 443), 1, 65535),
                 Enabled = section.GetBool(nameof(TargetConfig.Enabled), true),
-                IntervalMs = section.GetIntOrNull(nameof(TargetConfig.IntervalMs)),
-                TimeoutMs = section.GetIntOrNull(nameof(TargetConfig.TimeoutMs)),
-                PayloadBytes = section.GetIntOrNull(nameof(TargetConfig.PayloadBytes)),
-                Ttl = section.GetIntOrNull(nameof(TargetConfig.Ttl)),
 
-                // Clamped like Port above: a hand-edited 0 would mean "alert before any failure",
-                // which the record logic cannot express.
-                FailuresBeforeDown = section.GetIntOrNull(nameof(TargetConfig.FailuresBeforeDown)) is { } f
-                    ? Math.Clamp(f, 1, 100)
-                    : null,
+                // Every override is clamped to the same range Settings.Validate applies globally.
+                // An override that skipped validation would be the one value in the file that
+                // could still be nonsense — and Ttl=0 in particular is not merely odd, it makes
+                // PingOptions throw on construction, which surfaces as a permanent unexplained
+                // TIMEOUT on that target rather than as a config error.
+                IntervalMs = ClampOrNull(section.GetIntOrNull(nameof(TargetConfig.IntervalMs)), 250, 3_600_000),
+                TimeoutMs = ClampOrNull(section.GetIntOrNull(nameof(TargetConfig.TimeoutMs)), 100, 60_000),
+                PayloadBytes = ClampOrNull(section.GetIntOrNull(nameof(TargetConfig.PayloadBytes)), 0, 65_500),
+                Ttl = ClampOrNull(section.GetIntOrNull(nameof(TargetConfig.Ttl)), 1, 255),
+
+                // A hand-edited 0 would mean "alert before any failure", which the record logic
+                // cannot express.
+                FailuresBeforeDown = ClampOrNull(
+                    section.GetIntOrNull(nameof(TargetConfig.FailuresBeforeDown)), 1, 100),
             });
         }
 
-        return new BoardConfig(settings, targets);
+        return new BoardConfig(settings, targets, alerts);
     }
 
-    public static void Save(string path, Settings settings, IEnumerable<TargetConfig> targets)
+    /// <summary>Clamps an optional override, preserving "inherit from [Settings]" as null.</summary>
+    private static int? ClampOrNull(int? value, int min, int max) =>
+        value is { } v ? Math.Clamp(v, min, max) : null;
+
+    /// <summary>
+    /// Writes the <c>[Alerts]</c> section, or copies the existing one across verbatim when the
+    /// caller passed none. Secrets are re-protected on the way out, so a password hand-typed into
+    /// the file as plaintext is encrypted the next time the board saves.
+    /// </summary>
+    private static void WriteAlerts(IniFile ini, string path, AlertSettings? alerts)
+    {
+        if (alerts is null)
+        {
+            var existing = File.Exists(path) || File.Exists(path + ".bak")
+                ? IniFile.LoadResilient(path).Find(AlertsSection)
+                : null;
+
+            if (existing is null) return;
+
+            var copy = ini.GetOrAdd(AlertsSection);
+            foreach (var (key, value) in existing.Entries) copy.Set(key, value);
+            return;
+        }
+
+        var section = ini.GetOrAdd(AlertsSection);
+        section.Comment =
+            "Alerting. Webhook posts JSON; email uses SMTP.\n" +
+            "WebhookAuthorization and SmtpPassword are DPAPI-encrypted for the current Windows\n" +
+            "user, so copying this file to another machine requires re-entering them. A value\n" +
+            "typed in as plaintext still works and is encrypted on the next save.";
+
+        section.Set(nameof(AlertSettings.WebhookEnabled), alerts.WebhookEnabled);
+        section.Set(nameof(AlertSettings.WebhookUrl), alerts.WebhookUrl);
+        section.Set(nameof(AlertSettings.WebhookAuthorization), ProtectedValue.Protect(alerts.WebhookAuthorization));
+        section.Set(nameof(AlertSettings.EmailEnabled), alerts.EmailEnabled);
+        section.Set(nameof(AlertSettings.SmtpHost), alerts.SmtpHost);
+        section.Set(nameof(AlertSettings.SmtpPort), alerts.SmtpPort);
+        section.Set(nameof(AlertSettings.SmtpUseStartTls), alerts.SmtpUseStartTls);
+        section.Set(nameof(AlertSettings.SmtpUser), alerts.SmtpUser);
+        section.Set(nameof(AlertSettings.SmtpPassword), ProtectedValue.Protect(alerts.SmtpPassword));
+        section.Set(nameof(AlertSettings.EmailFrom), alerts.EmailFrom);
+        section.Set(nameof(AlertSettings.EmailTo), alerts.EmailTo);
+        section.Set(nameof(AlertSettings.MinIntervalSeconds), alerts.MinIntervalSeconds);
+        section.Set(nameof(AlertSettings.NotifyOnRecovery), alerts.NotifyOnRecovery);
+        section.Set(nameof(AlertSettings.TimeoutMs), alerts.TimeoutMs);
+    }
+
+    /// <param name="alerts">
+    /// Null means "leave the alert configuration alone". The board autosaves whenever a target is
+    /// edited, and those paths have no alert settings in hand — without this, the first autosave
+    /// after startup would quietly delete the user's webhook and SMTP credentials.
+    /// </param>
+    public static void Save(
+        string path,
+        Settings settings,
+        IEnumerable<TargetConfig> targets,
+        AlertSettings? alerts = null)
     {
         var ini = new IniFile();
 
@@ -117,6 +206,8 @@ public static class ConfigStore
         s.Set(nameof(Settings.LogEnabled), settings.LogEnabled);
         s.Set(nameof(Settings.LogPath), settings.LogPath);
         s.Set(nameof(Settings.ResumeSettleMs), settings.ResumeSettleMs);
+
+        WriteAlerts(ini, path, alerts);
 
         foreach (var t in targets)
         {

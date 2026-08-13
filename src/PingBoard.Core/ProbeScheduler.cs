@@ -40,6 +40,15 @@ public sealed class ProbeScheduler : IAsyncDisposable
     private readonly DnsCache _dns;
 
     private SemaphoreSlim _concurrency;
+
+    /// <summary>
+    /// The ceiling <see cref="_concurrency"/> was built with. Tracked separately because
+    /// <see cref="SemaphoreSlim.CurrentCount"/> reports permits still <em>available</em>, not the
+    /// configured maximum — comparing against it would rebuild the semaphore on every settings
+    /// apply that happened to catch a probe in flight.
+    /// </summary>
+    private int _maxConcurrent;
+
     private Settings _settings;
     private CancellationTokenSource? _cts;
     private Task? _loop;
@@ -60,7 +69,8 @@ public sealed class ProbeScheduler : IAsyncDisposable
     {
         _settings = settings;
         _dns = new DnsCache(settings.DnsCacheSeconds);
-        _concurrency = new SemaphoreSlim(settings.MaxConcurrent, settings.MaxConcurrent);
+        _maxConcurrent = settings.MaxConcurrent;
+        _concurrency = new SemaphoreSlim(_maxConcurrent, _maxConcurrent);
     }
 
     /// <summary>Raised when a target crosses the up/down threshold. Never on every failed probe.</summary>
@@ -72,6 +82,12 @@ public sealed class ProbeScheduler : IAsyncDisposable
     public bool IsSuspended => _suspended;
     public string SuspendReason => _suspendReason;
     public DnsCache Dns => _dns;
+
+    /// <summary>
+    /// Probe slots currently free. Exposed so the self-test can assert that the ceiling tracks
+    /// settings, since a silently wrong ceiling is invisible from the outside otherwise.
+    /// </summary>
+    public int AvailableConcurrency => _concurrency.CurrentCount;
 
     public IReadOnlyList<PingTarget> Targets
     {
@@ -139,12 +155,20 @@ public sealed class ProbeScheduler : IAsyncDisposable
     {
         _settings = settings;
 
-        if (_concurrency.CurrentCount != settings.MaxConcurrent)
+        if (_maxConcurrent != settings.MaxConcurrent)
         {
-            var old = _concurrency;
-            _concurrency = new SemaphoreSlim(settings.MaxConcurrent, settings.MaxConcurrent);
-            old.Dispose();
+            // The outgoing semaphore is deliberately not disposed. Probes already in flight hold
+            // permits on it and release the instance they acquired, which may land after this
+            // returns; disposing here would race them. SemaphoreSlim only owns a disposable
+            // resource once AvailableWaitHandle has been read, which this class never does, so
+            // dropping the reference and letting the GC collect it is both safe and complete.
+            _maxConcurrent = settings.MaxConcurrent;
+            _concurrency = new SemaphoreSlim(_maxConcurrent, _maxConcurrent);
         }
+
+        // The TTL is live rather than fixed at construction, so editing DnsCacheSeconds takes
+        // effect on the next lookup instead of at the next restart.
+        _dns.SetTtl(settings.DnsCacheSeconds);
 
         lock (_targetsGate) RestaggerLocked();
     }
@@ -225,8 +249,11 @@ public sealed class ProbeScheduler : IAsyncDisposable
                         continue;
                     }
 
-                    // Skip rather than queue when we're at the concurrency ceiling.
-                    if (!_concurrency.Wait(0, CancellationToken.None))
+                    // Skip rather than queue when we're at the concurrency ceiling. The instance is
+                    // captured so the release goes back to the semaphore this probe took a permit
+                    // from, even if ApplySettings swaps it out while the probe is in flight.
+                    var concurrency = _concurrency;
+                    if (!concurrency.Wait(0, CancellationToken.None))
                     {
                         target.EndProbe();
                         target.NextDueTick = now + TickMs;
@@ -235,7 +262,7 @@ public sealed class ProbeScheduler : IAsyncDisposable
 
                     target.NextDueTick = now + target.IntervalFrom(_settings);
                     Interlocked.Increment(ref _outstanding);
-                    _ = ProbeOneAsync(target, ct);
+                    _ = ProbeOneAsync(target, concurrency, ct);
                 }
             }
         }
@@ -245,7 +272,7 @@ public sealed class ProbeScheduler : IAsyncDisposable
         }
     }
 
-    private async Task ProbeOneAsync(PingTarget target, CancellationToken ct)
+    private async Task ProbeOneAsync(PingTarget target, SemaphoreSlim concurrency, CancellationToken ct)
     {
         var settings = _settings;
 
@@ -299,7 +326,7 @@ public sealed class ProbeScheduler : IAsyncDisposable
         finally
         {
             target.EndProbe();
-            _concurrency.Release();
+            concurrency.Release();
             Interlocked.Decrement(ref _outstanding);
         }
     }

@@ -1,0 +1,20 @@
+# Normalise text to LF in the repository and check it out as CRLF on Windows. The initial commit
+# stored LF, so without this Git's autocrlf default rewrites every touched file's line endings and
+# buries a real change under a whole-file diff.
+* text=auto eol=crlf
+
+# Line-ending-sensitive or binary: never converted.
+*.sln       text eol=crlf
+*.slnx      text eol=crlf
+*.csproj    text eol=crlf
+*.xaml      text eol=crlf
+*.cs        text eol=crlf
+*.md        text eol=crlf
+*.ini       text eol=crlf
+
+*.ico       binary
+*.png       binary
+*.jpg       binary
+*.dll       binary
+*.exe       binary
+*.pri       binary

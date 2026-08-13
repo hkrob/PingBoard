@@ -27,6 +27,15 @@ namespace PingBoard.App;
 /// </summary>
 public static class Notifications
 {
+    /// <summary>
+    /// Constant tag/group, so each notification <em>replaces</em> the previous one instead of
+    /// stacking. A board of forty targets riding out a flaky uplink otherwise leaves a column of
+    /// near-identical toasts in the notification centre, and the one that matters — the current
+    /// state — is buried under the history of how it got there.
+    /// </summary>
+    private const string NotificationTag = "pingboard-state";
+    private const string NotificationGroup = "pingboard";
+
     private static bool _registered;
     private static bool _unavailable;
 
@@ -64,8 +73,13 @@ public static class Notifications
             var notification = new AppNotificationBuilder()
                 .AddText(title)
                 .AddText(body)
+                .SetTag(NotificationTag)
+                .SetGroup(NotificationGroup)
                 .BuildNotification();
 
+            // Showing with a tag/group that is already present replaces that notification rather
+            // than adding another, so the notification centre holds the latest state and not a
+            // transcript of every transition since the app started.
             AppNotificationManager.Default.Show(notification);
             return true;
         }

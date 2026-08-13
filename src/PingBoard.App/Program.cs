@@ -13,12 +13,20 @@ public static class Program
     /// <summary>Config file chosen on the command line with <c>--config &lt;path&gt;</c>.</summary>
     public static string? RequestedConfigPath { get; private set; }
 
+    /// <summary>
+    /// Launched with <c>--minimized</c>, so start in the tray with no window. Set by the autostart
+    /// entry; see <see cref="Autostart"/>.
+    /// </summary>
+    public static bool StartMinimized { get; private set; }
+
     [STAThread]
     private static int Main(string[] args)
     {
         WinRT.ComWrappersSupport.InitializeComWrappers();
 
         RequestedConfigPath = ParseConfigArg(args);
+        StartMinimized = Array.Exists(args,
+            a => a.Equals(Autostart.MinimizedSwitch, StringComparison.OrdinalIgnoreCase));
 
         // Instance identity is keyed on the config file, so `--config a.ini` and `--config b.ini`
         // are legitimately separate instances while a second launch of the same board just

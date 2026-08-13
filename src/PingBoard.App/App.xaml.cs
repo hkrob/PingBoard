@@ -35,7 +35,11 @@ public partial class App : Application
 
         _window = new MainWindow();
         Window = _window;
-        _window.Activate();
+
+        // Autostart launches straight to the tray. The window is constructed either way — the
+        // engine and the tray icon live behind it — it simply never gets shown.
+        if (Program.StartMinimized) _window.StartHidden();
+        else _window.Activate();
     }
 
     /// <summary>

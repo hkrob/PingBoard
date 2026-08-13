@@ -24,9 +24,19 @@ public sealed class DnsCache
     private readonly ConcurrentDictionary<string, ForwardEntry> _forward = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, string?> _reverse = new(StringComparer.OrdinalIgnoreCase);
 
-    private readonly TimeSpan _ttl;
+    /// <summary>
+    /// Cache lifetime in milliseconds. Mutable so a settings edit applies to the next lookup
+    /// rather than waiting for a restart; written and read atomically because probes resolve from
+    /// threadpool threads while the UI applies settings.
+    /// </summary>
+    private long _ttlMs;
 
-    public DnsCache(int ttlSeconds) => _ttl = TimeSpan.FromSeconds(Math.Max(1, ttlSeconds));
+    public DnsCache(int ttlSeconds) => _ttlMs = TtlMsFrom(ttlSeconds);
+
+    /// <summary>Updates the cache lifetime. Entries already cached keep their existing expiry.</summary>
+    public void SetTtl(int ttlSeconds) => Volatile.Write(ref _ttlMs, TtlMsFrom(ttlSeconds));
+
+    private static long TtlMsFrom(int ttlSeconds) => (long)Math.Max(1, ttlSeconds) * 1000;
 
     private sealed record ForwardEntry(IPAddress Address, long ExpiresAtTick);
 
@@ -60,7 +70,7 @@ public sealed class DnsCache
 
         if (resolved is not null)
         {
-            _forward[host] = new ForwardEntry(resolved, now + (long)_ttl.TotalMilliseconds);
+            _forward[host] = new ForwardEntry(resolved, now + Volatile.Read(ref _ttlMs));
             return resolved;
         }
 

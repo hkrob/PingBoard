@@ -27,6 +27,10 @@ public sealed partial class BoardView : UserControl
         BuildColumnsMenu();
         UpdateSortIndicator();
 
+        // Read from the registry rather than from our own saved state: the entry can be removed
+        // by another tool, or by the uninstaller, and the menu should show what is actually true.
+        StartWithWindows.IsChecked = Autostart.IsEnabled;
+
         KeyDown += OnKeyDown;
     }
 
@@ -224,9 +228,43 @@ public sealed partial class BoardView : UserControl
     /// <summary>Raised when the user picks a theme, so the window can persist it.</summary>
     public event Action<string>? ThemeChanged;
 
+    /// <summary>
+    /// Re-resolves the brushes that XAML binds only once, and asks every row to re-resolve its
+    /// status colour.
+    /// <para>
+    /// A <c>{ThemeResource}</c> reference is evaluated when the element is realised and again on an
+    /// actual theme change — but not because a palette was swapped underneath it. The row colours
+    /// and the sparkline resolve by key on every use and need no help; these three brushes do.
+    /// </para>
+    /// </summary>
+    public void ApplyPalette()
+    {
+        HeaderBar.Background = Controls.BoardPalette.Find("HeaderBackgroundBrush");
+        HeaderBar.BorderBrush = Controls.BoardPalette.Find("RowSeparatorBrush");
+        StatusBar.BorderBrush = Controls.BoardPalette.Find("RowSeparatorBrush");
+
+        // The status key itself has not changed, so the converter would not otherwise re-run.
+        Vm.RefreshStatusBrushes();
+    }
+
     private void OnThemeSystem(object sender, RoutedEventArgs e) => SelectTheme("System");
     private void OnThemeLight(object sender, RoutedEventArgs e) => SelectTheme("Light");
     private void OnThemeDark(object sender, RoutedEventArgs e) => SelectTheme("Dark");
+    private void OnThemeMatrix(object sender, RoutedEventArgs e) => SelectTheme(MatrixTheme.Name);
+
+    /// <summary>
+    /// Toggles the Windows startup entry, reverting the tick if the write was refused. A menu that
+    /// shows "on" while the registry says otherwise is worse than no toggle at all — the user would
+    /// only find out at the next login, which is the moment they were relying on it.
+    /// </summary>
+    private void OnToggleAutostart(object sender, RoutedEventArgs e)
+    {
+        if (Autostart.Set(StartWithWindows.IsChecked) is { } error)
+        {
+            Vm.ShowBanner(error);
+            StartWithWindows.IsChecked = Autostart.IsEnabled;
+        }
+    }
 
     /// <summary>
     /// Reflects the chosen theme in the menu and reports it upward.
@@ -239,9 +277,10 @@ public sealed partial class BoardView : UserControl
     /// </summary>
     public void SelectTheme(string theme, bool notify = true)
     {
-        ThemeSystem.IsChecked = theme is not ("Light" or "Dark");
+        ThemeSystem.IsChecked = theme is not ("Light" or "Dark" or MatrixTheme.Name);
         ThemeLight.IsChecked = theme == "Light";
         ThemeDark.IsChecked = theme == "Dark";
+        ThemeMatrix.IsChecked = theme == MatrixTheme.Name;
 
         if (notify) ThemeChanged?.Invoke(theme);
     }

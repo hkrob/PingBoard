@@ -119,6 +119,13 @@ public sealed partial class TrayIcon : IDisposable
         uID = 1,
     };
 
+    /// <summary>
+    /// True when the icon is actually in the notification area. Construction swallows its failures
+    /// so a tray problem cannot stop the board from monitoring, which means callers that depend on
+    /// the icon being reachable have to ask.
+    /// </summary>
+    public bool IsVisible => _added && !_disposed;
+
     /// <summary>Updates the hover tooltip — used to show the current up/down tally.</summary>
     public void SetTooltip(string text)
     {
@@ -138,6 +145,21 @@ public sealed partial class TrayIcon : IDisposable
     public void Flash(string title, string body)
     {
         if (!_added || _disposed) return;
+
+        // Withdraw whatever balloon is currently showing or waiting before posting the new one.
+        //
+        // The shell queues balloon tips and plays them in order, so a burst of transitions makes
+        // the user watch the backlog drain before the current state appears — the oldest, least
+        // useful message gets the most screen time. An empty szInfo is the documented way to
+        // remove a balloon, so this leaves exactly the newest one pending.
+        //
+        // This is the path that actually runs here: toast registration fails under self-contained
+        // deployment, so the tag/group replacement in Notifications never gets a chance.
+        var clear = NewData();
+        clear.uFlags = NIF_INFO;
+        clear.szInfo = "";
+        clear.szInfoTitle = "";
+        Shell_NotifyIcon(NIM_MODIFY, ref clear);
 
         var data = NewData();
         data.uFlags = NIF_INFO;

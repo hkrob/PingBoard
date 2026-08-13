@@ -21,7 +21,10 @@ public sealed class UiState
     public string HiddenColumns { get; set; } = string.Join(',', ColumnLayoutDefaults);
     public string? LastConfigPath { get; set; }
 
-    /// <summary>"System", "Light" or "Dark". System follows the Windows setting live.</summary>
+    /// <summary>
+    /// "System", "Light", "Dark" or "Matrix". System follows the Windows setting live; Matrix is
+    /// the green-phosphor terminal palette layered over Dark.
+    /// </summary>
     public string Theme { get; set; } = "System";
 
     private static IEnumerable<string> ColumnLayoutDefaults => ViewModels.ColumnLayout.DefaultHidden;
