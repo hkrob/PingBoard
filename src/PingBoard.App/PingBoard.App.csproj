@@ -1,0 +1,67 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.26100.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
+    <RootNamespace>PingBoard.App</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Platforms>x64</Platforms>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+
+    <UseWinUI>true</UseWinUI>
+
+    <!--
+      Unpackaged, self-contained. WindowsPackageType=None makes the WASDK bootstrapper
+      auto-initialize; the two SelfContained switches bundle both the .NET runtime and the
+      Windows App SDK runtime so the output folder runs on a clean machine with no installs.
+    -->
+    <WindowsPackageType>None</WindowsPackageType>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <SelfContained>true</SelfContained>
+
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <EnableMsixTooling>false</EnableMsixTooling>
+
+    <!-- Replaces the generated entry point with Program.Main, so single-instance
+         redirection can run before the UI spins up. -->
+    <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.3.1" />
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\PingBoard.Core\PingBoard.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="Assets\**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!--
+    `dotnet publish` on an unpackaged WinUI 3 app does not carry the project's own resources.pri
+    into the publish folder, only the framework ones. Compiled XAML lives in that file, so without
+    it every window dies at InitializeComponent with a XamlParseException — while the same build
+    in bin\ runs perfectly, which makes it a confusing thing to chase.
+
+    Verified here: bin\Release ran fine, dist\ crashed, and PingBoard.App.pri was the difference.
+  -->
+  <Target Name="CopyAppPriToPublishDir" AfterTargets="Publish">
+    <Copy SourceFiles="$(ProjectPriFullPath)"
+          DestinationFolder="$(PublishDir)"
+          SkipUnchangedFiles="true"
+          Condition="Exists('$(ProjectPriFullPath)')" />
+    <Copy SourceFiles="$(OutDir)$(AssemblyName).pri"
+          DestinationFolder="$(PublishDir)"
+          SkipUnchangedFiles="true"
+          Condition="!Exists('$(ProjectPriFullPath)') And Exists('$(OutDir)$(AssemblyName).pri')" />
+    <Error Text="resources.pri was not copied to $(PublishDir); the published app would fail at startup."
+           Condition="!Exists('$(PublishDir)$(AssemblyName).pri')" />
+  </Target>
+
+</Project>

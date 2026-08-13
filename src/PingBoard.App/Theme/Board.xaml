@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ResourceDictionary
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:PingBoard.App.Controls">
+
+    <!--
+        Status colours are defined per theme rather than once, because the Win11 palette
+        deliberately avoids pure saturation on dark backgrounds. Colour is never the only carrier
+        of meaning here - every status also renders a glyph and a text label - so these only ever
+        reinforce information that is already legible without them.
+    -->
+    <ResourceDictionary.ThemeDictionaries>
+
+        <ResourceDictionary x:Key="Default">
+            <SolidColorBrush x:Key="StatusOkBrush"          Color="#4AE38A" />
+            <SolidColorBrush x:Key="StatusTimeoutBrush"     Color="#FFC55C" />
+            <SolidColorBrush x:Key="StatusUnreachableBrush" Color="#FF7A6B" />
+            <SolidColorBrush x:Key="StatusDnsBrush"         Color="#FF8FD4" />
+            <SolidColorBrush x:Key="StatusRefusedBrush"     Color="#FFA26B" />
+            <SolidColorBrush x:Key="StatusIdleBrush"        Color="#8A8F98" />
+            <SolidColorBrush x:Key="SparkOkBrush"           Color="#3FA46A" />
+            <SolidColorBrush x:Key="SparkBadBrush"          Color="#C0483A" />
+            <SolidColorBrush x:Key="HeaderBackgroundBrush"  Color="#18FFFFFF" />
+            <SolidColorBrush x:Key="RowSeparatorBrush"      Color="#14FFFFFF" />
+        </ResourceDictionary>
+
+        <ResourceDictionary x:Key="Light">
+            <SolidColorBrush x:Key="StatusOkBrush"          Color="#0E7A3C" />
+            <SolidColorBrush x:Key="StatusTimeoutBrush"     Color="#9A6100" />
+            <SolidColorBrush x:Key="StatusUnreachableBrush" Color="#B3261E" />
+            <SolidColorBrush x:Key="StatusDnsBrush"         Color="#A5217F" />
+            <SolidColorBrush x:Key="StatusRefusedBrush"     Color="#A34700" />
+            <SolidColorBrush x:Key="StatusIdleBrush"        Color="#5D6169" />
+            <SolidColorBrush x:Key="SparkOkBrush"           Color="#2E9C5E" />
+            <SolidColorBrush x:Key="SparkBadBrush"          Color="#C0483A" />
+            <SolidColorBrush x:Key="HeaderBackgroundBrush"  Color="#12000000" />
+            <SolidColorBrush x:Key="RowSeparatorBrush"      Color="#14000000" />
+        </ResourceDictionary>
+
+        <ResourceDictionary x:Key="HighContrast">
+            <SolidColorBrush x:Key="StatusOkBrush"          Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="StatusTimeoutBrush"     Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="StatusUnreachableBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="StatusDnsBrush"         Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="StatusRefusedBrush"     Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="StatusIdleBrush"        Color="{ThemeResource SystemColorGrayTextColor}" />
+            <SolidColorBrush x:Key="SparkOkBrush"           Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="SparkBadBrush"          Color="{ThemeResource SystemColorHotlightColor}" />
+            <SolidColorBrush x:Key="HeaderBackgroundBrush"  Color="Transparent" />
+            <SolidColorBrush x:Key="RowSeparatorBrush"      Color="{ThemeResource SystemColorGrayTextColor}" />
+        </ResourceDictionary>
+
+    </ResourceDictionary.ThemeDictionaries>
+
+    <!-- Resolves a status resource key to a brush at bind time, so a live light/dark switch
+         recolours every row instead of leaving stale brushes until restart. -->
+    <controls:BrushKeyConverter x:Key="BrushKeyConverter" />
+
+    <!-- A monospaced face keeps the numeric columns from jittering as values change at 4 Hz. -->
+    <x:Double x:Key="RowFontSize">13</x:Double>
+    <FontFamily x:Key="NumericFont">Consolas</FontFamily>
+
+    <Style x:Key="HeaderTextStyle" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Opacity" Value="0.75" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+        <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+    </Style>
+
+    <Style x:Key="CellTextStyle" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="{StaticResource RowFontSize}" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+        <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+    </Style>
+
+    <Style x:Key="NumericCellStyle" TargetType="TextBlock" BasedOn="{StaticResource CellTextStyle}">
+        <Setter Property="FontFamily" Value="{StaticResource NumericFont}" />
+        <Setter Property="HorizontalAlignment" Value="Right" />
+    </Style>
+
+</ResourceDictionary>

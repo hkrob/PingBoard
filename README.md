@@ -1,0 +1,190 @@
+# PingBoard
+
+A always-on ping monitor for Windows 11. Watches a list of hosts, shows what is up and what is
+down, and keeps enough history to tell you *how* something is failing rather than just that it is.
+
+Built on **WinUI 3** (Windows App SDK 2.3.1) and **.NET 10**, deployed unpackaged and
+self-contained — copy the folder and run it, nothing to install.
+
+---
+
+## Build and run
+
+Requires the .NET 10 SDK (`winget install Microsoft.DotNet.SDK.10`). No Visual Studio needed.
+
+```bash
+dotnet run --project src/PingBoard.App
+```
+
+Release build you can copy anywhere:
+
+```bash
+dotnet publish src/PingBoard.App -c Release -r win-x64 -o dist
+```
+
+Point it at a specific board:
+
+```bash
+dist/PingBoard.App.exe --config C:\path\to\board.ini
+```
+
+`--config` also keys the single-instance guard, so two different boards can run side by side while
+relaunching the same one just surfaces the window already open.
+
+### The headless engine
+
+All the networking lives in `PingBoard.Core`, which references no UI type at all. That is enforced
+structurally — it is a separate project — so the part that has to be correct can be driven and
+stress-tested without XAML in the way.
+
+```bash
+dotnet run --project src/PingBoard.Harness -- --selftest        # 58 assertions
+dotnet run --project src/PingBoard.Harness -- board.ini --seconds 300
+```
+
+The harness prints the same columns as the UI, plus a forced-GC memory line every 60s.
+
+---
+
+## Configuration
+
+A plain `.ini` you can hand-edit and copy between machines.
+
+```ini
+[Settings]
+IntervalMs=2000
+TimeoutMs=2000
+RollingWindow=300          ; probes kept per target for Loss %, avg/min/max and History
+FailuresBeforeDown=3       ; consecutive failures before alerting
+MaxConcurrent=32
+PreferIPv4=true
+DnsCacheSeconds=300
+LogEnabled=true
+LogPath=pingboard-events.csv
+
+[Target:gateway]
+Address=10.1.10.1
+
+[Target:homeassistant]
+Address=10.1.10.12
+Probe=tcp
+Port=8123
+IntervalMs=5000            ; any [Settings] key can be overridden per target
+
+[Target:old-nas]
+Address=nas.local
+Enabled=false              ; paused
+```
+
+Counters live in a sidecar (`board.state.ini`), so the file you edit stays free of churning
+numbers. Deleting the sidecar resets all statistics; there is a menu item for the same thing.
+
+`Probe=tcp` exists because plenty of hosts and most corporate firewalls drop ICMP silently, which
+would otherwise read as a permanently dead target. A completed TCP handshake also proves more than
+an echo reply does, and a *refused* connection is reported separately from a timeout — it means the
+host is up and the port is closed.
+
+---
+
+## What the columns mean
+
+**Status · IP · Hostname · Last OK · Last NOK · OK/NOK** are shown by default, along with **RTT**,
+**Loss %** and **History**. Right-click the Columns button for avg/min/max, consecutive failures,
+uptime and probe type.
+
+**Loss %** is the one worth reading day to day. It is a rolling window over the last N probes; the
+lifetime OK/NOK count is dragged down forever by an outage three days ago and stops describing the
+present.
+
+**History** is a sparkline of recent probes — bar height is RTT, failures are full-height blocks.
+It is what turns a number into a diagnosis: "Loss 4%" tells you something is wrong, but four evenly
+spaced drops means periodic, and one solid block means a single outage. Different problems.
+
+Status is never conveyed by colour alone — every row carries a glyph, a text label and a colour.
+Hovering shows the raw `IPStatus`, which distinguishes "nothing answered" from "a router actively
+said it could not deliver".
+
+Closing the window hides to the tray; **Exit** is on the tray menu. Notifications fire only on
+transitions (down / recovered with duration), never on individual failed probes.
+
+---
+
+## Design notes
+
+The decisions that matter, and why.
+
+**Sleep, resume and NIC loss never count as failures.** The single most important guard here.
+`SystemWatcher` watches `PowerModeChanged` and `NetworkAvailabilityChanged`; while suspended every
+target reads `Suspended`, counters freeze and no notification fires. Without it, closing a laptop
+lid for an hour manufactures thousands of failures, wrecks the rolling loss figures and produces an
+alert storm on wake — and a monitor that cries wolf after every sleep gets ignored.
+
+**Fixed-size ring buffers, never a growing list.** A `List<ProbeResult>` appended at 1 Hz across 40
+targets grows ~100 MB/day. Measured over 7 minutes at ~48 probes/sec (≈20,000 probes) the managed
+heap stayed flat at 0.6 MB and handle count was unchanged.
+
+**One scheduler, staggered — not N timers.** A single `PeriodicTimer` drives everything, each
+target phase-offset across its interval. Probes that are still outstanding are skipped rather than
+stacked, so a dead host with a long timeout cannot accumulate work; a `SemaphoreSlim` caps total
+concurrency.
+
+**Monotonic clock for durations, wall clock only for display.** Mixing them means an NTP correction
+or a DST rollover silently corrupts every elapsed time on screen.
+
+**DNS is a separate failure mode.** Names resolve once and cache with a TTL, re-resolving on expiry
+or after repeated failures so a DHCP change is still picked up. A name that stops resolving shows
+`DNS FAIL`, not `TIMEOUT` — a different problem at a different layer.
+
+**Probe rate is decoupled from render rate.** Probes complete on threadpool threads and mutate the
+engine; a single 4 Hz timer pulls immutable snapshots to the UI. Marshalling every result to the
+dispatcher would mean 40+ hops/sec to redraw text nobody can read that fast.
+
+**Atomic config writes.** Content goes to a temp file, is flushed to disk, then renamed over the
+destination with `File.Move(overwrite: true)` — `MoveFileEx`, a true atomic rename. `File.Replace`
+was tried first and rejected: it moves the destination to the backup and *then* renames the temp
+in, so a kill between those steps leaves no config at all. A torture test that hard-killed a writer
+mid-save hit exactly that window. Loading also recovers from `.bak` and clears orphaned `.tmp`.
+
+### WinUI 3 rough edges worth knowing
+
+Three cost real time and are easy to hit again:
+
+1. **A `Window` is not a `FrameworkElement`.** `x:Bind` with a converter inside a `DataTemplate`
+   cannot compile when the XAML root is a Window. The board therefore lives in `BoardView`, a
+   `UserControl`, and `MainWindow` is an empty shell.
+
+2. **`dotnet publish` drops the app's `resources.pri`.** Compiled XAML lives there, so the
+   published app dies at `InitializeComponent` while the identical build in `bin\` runs perfectly.
+   `PingBoard.App.csproj` has an explicit copy target with an `Error` guard so this fails loudly at
+   build time rather than silently at startup.
+
+3. **Toast registration fails under self-contained deployment.**
+   `AppNotificationManager.Register()` needs `Microsoft.WindowsAppRuntime.Insights.Resource.dll`,
+   which ships with the installed framework runtime and is not in the self-contained payload or any
+   NuGet package. Rather than give up portability, notifications fall back to a tray balloon —
+   which Windows 10/11 renders as an ordinary toast in the notification centre anyway.
+
+There is also no `DataGrid` in WinUI 3 (the Community Toolkit dropped it at v8.0), so the board is
+a virtualized `ListView` with a hand-built header. `ColumnLayout` is a single shared object both
+the header and the row template bind to, which makes header/row misalignment structurally
+impossible. Hidden columns collapse to zero width *and* `Visibility.Collapsed` — zero width alone
+is not enough, because a `TextBlock` arranged into it still paints and bleeds over its neighbour.
+
+Similarly there is no tray support, so `TrayIcon` builds on `Shell_NotifyIcon` directly rather than
+taking `H.NotifyIcon.WinUI`, whose latest stable release predates the Windows App SDK 2.0 breaking
+changes.
+
+---
+
+## Layout
+
+```
+src/PingBoard.Core/      engine — no UI references, ever
+src/PingBoard.App/       WinUI 3 front end
+src/PingBoard.Harness/   headless driver and self-tests
+```
+
+## Not included
+
+Traceroute/MTR, SNMP, latency graphing beyond the sparkline, email or webhook alerting, a service
+mode, and multi-machine sync. Each is a reasonable v2; none belonged in the first build.

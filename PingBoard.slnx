@@ -1,0 +1,7 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/PingBoard.App/PingBoard.App.csproj" />
+    <Project Path="src/PingBoard.Core/PingBoard.Core.csproj" />
+    <Project Path="src/PingBoard.Harness/PingBoard.Harness.csproj" />
+  </Folder>
+</Solution>

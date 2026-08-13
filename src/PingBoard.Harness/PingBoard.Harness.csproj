@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Headless driver for the engine. Exists so the networking layer - the part that actually has to
+    be correct - can be exercised, watched and stress-tested without any UI in the way.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>PingBoard.Harness</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\PingBoard.Core\PingBoard.Core.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,12 @@
+bin/
+obj/
+dist/
+.vs/
+*.user
+
+# Generated at runtime next to whatever config is in use
+*.state.ini
+*.ini.bak
+*.ini.tmp
+pingboard-events.csv*
+crash.log

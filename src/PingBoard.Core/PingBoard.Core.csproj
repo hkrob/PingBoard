@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      Targets net10.0-windows because SystemWatcher needs Microsoft.Win32.SystemEvents for
+      sleep/resume detection. Everything else here is portable; the deliberate constraint is that
+      this project must never reference a UI framework, so the engine stays testable headless.
+    -->
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Win32.SystemEvents" Version="10.0.0" />
+  </ItemGroup>
+
+</Project>

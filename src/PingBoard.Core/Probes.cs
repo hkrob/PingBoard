@@ -1,0 +1,156 @@
+using System.Net;
+using System.Net.NetworkInformation;
+using System.Net.Sockets;
+
+namespace PingBoard.Core;
+
+/// <summary>Options for a single probe, resolved from global settings plus per-target overrides.</summary>
+public readonly record struct ProbeOptions(int TimeoutMs, int PayloadBytes, int Ttl, int Port);
+
+/// <summary>
+/// A probe bound to one target. Instances are per-target and stateful — see
+/// <see cref="IcmpProbe"/> for why that matters.
+/// </summary>
+public interface IProbe : IDisposable
+{
+    Task<ProbeResult> ProbeAsync(IPAddress address, ProbeOptions options, CancellationToken ct);
+}
+
+/// <summary>
+/// ICMP echo via <see cref="Ping"/>, which uses the OS <c>IcmpSendEcho2</c> path — no raw sockets
+/// and no elevation required (verified non-elevated on this machine).
+/// <para>
+/// <b>One instance per target, never shared.</b> <see cref="Ping"/> is not reentrant: calling
+/// <see cref="Ping.SendPingAsync(IPAddress, int, byte[], PingOptions)"/> while a send is already
+/// outstanding on the same instance throws <see cref="InvalidOperationException"/>. The scheduler's
+/// in-flight guard also protects against this, but owning the instance makes the invariant local.
+/// </para>
+/// <para>
+/// Shelling out to <c>ping.exe</c> would cost a process launch and roughly 5 MB per probe, which
+/// defeats the purpose of the tool.
+/// </para>
+/// </summary>
+public sealed class IcmpProbe : IProbe
+{
+    private readonly Ping _ping = new();
+    private byte[] _payload = [];
+    private bool _disposed;
+
+    public async Task<ProbeResult> ProbeAsync(IPAddress address, ProbeOptions options, CancellationToken ct)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        // Reuse the buffer across probes; only reallocate when the configured size changes.
+        if (_payload.Length != options.PayloadBytes)
+        {
+            _payload = new byte[options.PayloadBytes];
+            for (var i = 0; i < _payload.Length; i++)
+                _payload[i] = (byte)('a' + i % 23);
+        }
+
+        var pingOptions = new PingOptions(options.Ttl, dontFragment: false);
+        var start = Environment.TickCount64;
+
+        try
+        {
+            var reply = await _ping.SendPingAsync(address, options.TimeoutMs, _payload, pingOptions)
+                                   .WaitAsync(ct)
+                                   .ConfigureAwait(false);
+
+            var status = ProbeResult.FromIpStatus(reply.Status);
+            var when = DateTimeOffset.Now;
+            var tick = Environment.TickCount64;
+
+            // Report the address we probed, never reply.Address.
+            //
+            // On failure the reply address is not the target: for DestinationHostUnreachable the
+            // local stack generates the ICMP error, so it comes back as this machine's own IP, and
+            // on the async timeout path it is often 0.0.0.0. Feeding either into the IP column
+            // would silently replace the address being monitored with a meaningless one.
+            return status.IsOk()
+                ? ProbeResult.Ok((int)reply.RoundtripTime, address, tick, when)
+                : ProbeResult.Fail(status, tick, when, reply.Status, address);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex) when (ex is PingException or InvalidOperationException or SocketException)
+        {
+            // A PingException generally means the local stack could not send at all. That is not a
+            // statement about the target, so record it as a timeout rather than "unreachable".
+            _ = start;
+            return ProbeResult.Fail(TargetStatus.Timeout, Environment.TickCount64, DateTimeOffset.Now,
+                                    IPStatus.Unknown, address);
+        }
+    }
+
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        _ping.Dispose();
+    }
+}
+
+/// <summary>
+/// TCP connect probe, for the very common case of a host or firewall that silently drops ICMP.
+/// A successful three-way handshake proves reachability more strongly than an echo reply does.
+/// <para>
+/// Every attempt gets a fresh <see cref="TcpClient"/> disposed in a <c>finally</c>. An abandoned
+/// half-open connect leaks a socket handle <em>per probe</em>, which at 1 Hz exhausts the process
+/// handle table within hours.
+/// </para>
+/// </summary>
+public sealed class TcpProbe : IProbe
+{
+    public async Task<ProbeResult> ProbeAsync(IPAddress address, ProbeOptions options, CancellationToken ct)
+    {
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutCts.CancelAfter(options.TimeoutMs);
+
+        var start = Environment.TickCount64;
+        TcpClient? client = null;
+
+        try
+        {
+            client = new TcpClient(address.AddressFamily);
+            await client.ConnectAsync(address, options.Port, timeoutCts.Token).ConfigureAwait(false);
+
+            var rtt = (int)(Environment.TickCount64 - start);
+            return ProbeResult.Ok(rtt, address, Environment.TickCount64, DateTimeOffset.Now);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (OperationCanceledException)
+        {
+            // Our own CancelAfter fired: the connect did not complete in time.
+            return ProbeResult.Fail(TargetStatus.Timeout, Environment.TickCount64, DateTimeOffset.Now,
+                                    IPStatus.TimedOut, address);
+        }
+        catch (SocketException ex)
+        {
+            // A refusal is a meaningfully different result from silence: the host answered, so it
+            // is up — the port is simply closed.
+            var status = ex.SocketErrorCode switch
+            {
+                SocketError.ConnectionRefused => TargetStatus.Refused,
+                SocketError.HostUnreachable
+                    or SocketError.NetworkUnreachable
+                    or SocketError.HostNotFound => TargetStatus.Unreachable,
+                SocketError.TimedOut => TargetStatus.Timeout,
+                _ => TargetStatus.Timeout,
+            };
+            return ProbeResult.Fail(status, Environment.TickCount64, DateTimeOffset.Now,
+                                    IPStatus.Unknown, address);
+        }
+        finally
+        {
+            client?.Dispose();
+        }
+    }
+
+    public void Dispose() { }
+}

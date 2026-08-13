@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Window
+    x:Class="PingBoard.App.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <!-- Mica: one line here, versus a DWM P/Invoke on any other framework. -->
+    <Window.SystemBackdrop>
+        <MicaBackdrop />
+    </Window.SystemBackdrop>
+
+    <!--
+        The window is deliberately an empty shell; the entire board lives in BoardView.
+
+        This is not just tidiness. In WinUI 3 a Window is not a FrameworkElement, so the XAML
+        compiler cannot emit converter lookup for an x:Bind inside a DataTemplate when the root of
+        the file is a Window. Hosting the tree in a UserControl is the idiomatic fix and is what
+        lets the status colours resolve through theme resources at bind time.
+    -->
+    <Grid x:Name="RootGrid" />
+
+</Window>
