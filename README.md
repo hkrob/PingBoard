@@ -353,5 +353,10 @@ src/PingBoard.Harness/   headless driver and self-tests
 
 ## Not included
 
-Traceroute/MTR, SNMP, latency graphing beyond the sparkline, email or webhook alerting, a service
-mode, and multi-machine sync. Each is a reasonable v2; none belonged in the first build.
+SNMP, a service mode, and multi-machine sync. Each is a reasonable next step; none belonged in the
+first build. Traceroute, latency graphing and webhook/email alerting were on this list and have
+since landed.
+
+## Licence
+
+MIT — see [LICENSE](LICENSE).
