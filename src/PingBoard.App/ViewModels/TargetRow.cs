@@ -51,6 +51,13 @@ public sealed partial class TargetRow : ObservableObject
     [ObservableProperty] public partial string Jitter { get; private set; } = "—";
     [ObservableProperty] public partial string Fails { get; private set; } = "";
     [ObservableProperty] public partial string Uptime { get; private set; } = "—";
+
+    // Rolling availability. Uptime is lifetime-cumulative, which the README rightly complains
+    // about: one outage three days ago drags it down forever and it stops describing anything.
+    // These are the actionable version.
+    [ObservableProperty] public partial string Avail24h { get; private set; } = "—";
+    [ObservableProperty] public partial string Avail7d { get; private set; } = "—";
+    [ObservableProperty] public partial string Avail30d { get; private set; } = "—";
     [ObservableProperty] public partial string Probe { get; private set; } = "icmp";
     [ObservableProperty] public partial string ThemeKey { get; private set; } = "StatusIdleBrush";
 
@@ -147,6 +154,16 @@ public sealed partial class TargetRow : ObservableObject
         foreach (var hop in trace.Hops) TraceHops.Add(hop.ToString());
     }
 
+    /// <summary>
+    /// Availability to two decimals, or an em dash when the period has no data at all.
+    /// <para>
+    /// A target added this morning genuinely has no thirty-day figure. Showing 100% for it would
+    /// be a lie of the most flattering kind — the number people quote in reports.
+    /// </para>
+    /// </summary>
+    private static string FormatAvailability(double? percent) =>
+        percent is { } value ? value.ToString("F2", CultureInfo.CurrentCulture) : "—";
+
     /// <summary>Bumped whenever history changes, so the sparkline knows to redraw.</summary>
     [ObservableProperty] public partial int HistoryVersion { get; private set; }
 
@@ -194,6 +211,11 @@ public sealed partial class TargetRow : ObservableObject
 
         var counters = Target.Counters;
         Uptime = counters.Total > 0 ? counters.UptimePercent.ToString("F2", CultureInfo.CurrentCulture) : "—";
+
+        var asOf = DateTimeOffset.Now;
+        Avail24h = FormatAvailability(Target.Availability.Percent(24, asOf));
+        Avail7d = FormatAvailability(Target.Availability.Percent(24 * 7, asOf));
+        Avail30d = FormatAvailability(Target.Availability.Percent(24 * 30, asOf));
 
         Probe = s.Probe == ProbeKind.Tcp ? $"tcp:{s.Port}" : "icmp";
 

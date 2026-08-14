@@ -42,11 +42,14 @@ public sealed class ColumnLayout : INotifyPropertyChanged
         [nameof(Spark)] = 110,
         [nameof(Uptime)] = 68,
         [nameof(Probe)] = 74,
+        [nameof(Avail24h)] = 78,
+        [nameof(Avail7d)] = 78,
+        [nameof(Avail30d)] = 78,
     };
 
     /// <summary>Hidden by default: the six requested columns plus RTT, loss and history stay on.</summary>
     public static readonly string[] DefaultHidden =
-        [nameof(AvgMinMax), nameof(Fails), nameof(Uptime), nameof(Probe)];
+        [nameof(AvgMinMax), nameof(Fails), nameof(Uptime), nameof(Probe), nameof(Avail7d), nameof(Avail30d)];
 
     /// <summary>
     /// Shared instance. Both the header grid and the row template bind here via <c>x:Bind</c> to a
@@ -80,6 +83,9 @@ public sealed class ColumnLayout : INotifyPropertyChanged
     public GridLength Spark => Width(nameof(Spark));
     public GridLength Uptime => Width(nameof(Uptime));
     public GridLength Probe => Width(nameof(Probe));
+    public GridLength Avail24h => Width(nameof(Avail24h));
+    public GridLength Avail7d => Width(nameof(Avail7d));
+    public GridLength Avail30d => Width(nameof(Avail30d));
 
     private GridLength Width([CallerMemberName] string id = "")
     {
@@ -214,6 +220,9 @@ public sealed class ColumnLayout : INotifyPropertyChanged
     public Visibility SparkVis => Vis(nameof(Spark));
     public Visibility UptimeVis => Vis(nameof(Uptime));
     public Visibility ProbeVis => Vis(nameof(Probe));
+    public Visibility Avail24hVis => Vis(nameof(Avail24h));
+    public Visibility Avail7dVis => Vis(nameof(Avail7d));
+    public Visibility Avail30dVis => Vis(nameof(Avail30d));
 
     private Visibility Vis(string id) =>
         _hidden.Contains(id) ? Visibility.Collapsed : Visibility.Visible;
@@ -282,6 +291,9 @@ public sealed class ColumnLayout : INotifyPropertyChanged
         nameof(AvgMinMax) => "avg / min / max",
         nameof(Loss) => "Loss %",
         nameof(Jitter) => "Jitter",
+        nameof(Avail24h) => "24h %",
+        nameof(Avail7d) => "7d %",
+        nameof(Avail30d) => "30d %",
         nameof(Fails) => "Fail",
         nameof(Spark) => "History",
         nameof(Uptime) => "Uptime",

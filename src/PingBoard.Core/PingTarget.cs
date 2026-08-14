@@ -25,6 +25,12 @@ public sealed class TargetConfig
     public string Path { get; set; } = "/";
 
     /// <summary>
+    /// Scheduled quiet hours, e.g. <c>Sat 22:00-02:00</c>. Probing continues; alerts do not fire.
+    /// See <see cref="MaintenanceSchedule"/>.
+    /// </summary>
+    public string Maintenance { get; set; } = "";
+
+    /// <summary>
     /// Status code an HTTP probe must see, or null to accept any 2xx/3xx. Worth setting when a
     /// URL legitimately redirects and you want to know if it ever stops.
     /// </summary>
@@ -124,10 +130,22 @@ public sealed class PingTarget : IDisposable
     /// <summary>Most recent path trace, captured when this target was last declared down.</summary>
     private TraceResult? _lastTrace;
 
+    private MaintenanceSchedule _maintenance = MaintenanceSchedule.None;
+
+    /// <summary>Availability over hours and days, as opposed to the last few minutes.</summary>
+    public AvailabilityLog Availability { get; private set; } = new();
+
+    /// <summary>True when the target is inside a scheduled maintenance window right now.</summary>
+    public bool InMaintenance(DateTimeOffset now) => _maintenance.Contains(now);
+
+    /// <summary>Replaces the availability history, for restoring a previous run's figures.</summary>
+    public void RestoreAvailability(AvailabilityLog log) => Availability = log;
+
     public PingTarget(TargetConfig config, Settings settings, TargetCounters? counters = null)
     {
         Config = config;
         Counters = counters ?? new TargetCounters();
+        _maintenance = MaintenanceSchedule.Parse(config.Maintenance);
         _history = new RingBuffer(settings.RollingWindow);
         _probe = CreateProbe(config.Probe);
         if (!config.Enabled) _status = TargetStatus.Paused;
@@ -219,10 +237,22 @@ public sealed class PingTarget : IDisposable
     /// turns that into a notification and a log line — which is why notifications fire on state
     /// change rather than on every failed probe.
     /// </returns>
-    public StateTransition? Record(in ProbeResult result, int failuresBeforeDown)
+    /// <param name="raiseTransitions">
+    /// False during a maintenance window. The sample, the counters and the failure streak are all
+    /// updated exactly as usual — only the notification is withheld, and crucially the
+    /// "already announced" flag is left alone.
+    /// <para>
+    /// That last part is the whole subtlety. If a window simply swallowed the transition, a host
+    /// that went down during maintenance and never came back would be marked as announced and you
+    /// would never be told. Leaving the flag clear means the first failing probe after the window
+    /// closes raises the alert — quiet while you expected the outage, loud the moment you did not.
+    /// </para>
+    /// </param>
+    public StateTransition? Record(in ProbeResult result, int failuresBeforeDown, bool raiseTransitions = true)
     {
         lock (_gate)
         {
+            Availability.Record(result.Status, result.When);
             _history.Add(result);
             _status = result.Status;
             _icmpStatus = result.IcmpStatus;
@@ -238,7 +268,7 @@ public sealed class PingTarget : IDisposable
                 _consecutiveFailures = 0;
                 _downFired = false;
 
-                if (!wasDown) { _downSinceTick = null; return null; }
+                if (!wasDown || !raiseTransitions) { _downSinceTick = null; return null; }
 
                 var downFor = _downSinceTick is { } since
                     ? TimeSpan.FromMilliseconds(result.TickMs - since)
@@ -257,7 +287,9 @@ public sealed class PingTarget : IDisposable
                 _downSinceTick ??= result.TickMs;
 
                 // Fire exactly once per outage, on the first probe at or past the threshold.
-                if (!_downFired && _consecutiveFailures >= failuresBeforeDown)
+                // Suppressed during maintenance without setting the flag, so the alert is still
+                // waiting to be raised when the window closes.
+                if (raiseTransitions && !_downFired && _consecutiveFailures >= failuresBeforeDown)
                 {
                     _downFired = true;
                     return new StateTransition(
@@ -293,6 +325,7 @@ public sealed class PingTarget : IDisposable
         lock (_gate)
         {
             _history.Clear();
+            Availability.Clear();
             Counters.OkCount = 0;
             Counters.NokCount = 0;
             Counters.LastOk = null;
@@ -311,6 +344,7 @@ public sealed class PingTarget : IDisposable
             var kindChanged = config.Probe != Config.Probe;
             var addressChanged = !string.Equals(config.Address, Config.Address, StringComparison.OrdinalIgnoreCase);
             Config = config;
+            _maintenance = MaintenanceSchedule.Parse(config.Maintenance);
 
             if (kindChanged)
             {

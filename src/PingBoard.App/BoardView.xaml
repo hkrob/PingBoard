@@ -247,6 +247,9 @@
                     <ColumnDefinition Width="{x:Bind vm:ColumnLayout.Instance.Spark, Mode=OneWay}" />
                     <ColumnDefinition Width="{x:Bind vm:ColumnLayout.Instance.Uptime, Mode=OneWay}" />
                     <ColumnDefinition Width="{x:Bind vm:ColumnLayout.Instance.Probe, Mode=OneWay}" />
+                    <ColumnDefinition Width="{x:Bind vm:ColumnLayout.Instance.Avail24h, Mode=OneWay}" />
+                    <ColumnDefinition Width="{x:Bind vm:ColumnLayout.Instance.Avail7d, Mode=OneWay}" />
+                    <ColumnDefinition Width="{x:Bind vm:ColumnLayout.Instance.Avail30d, Mode=OneWay}" />
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
 
@@ -269,6 +272,9 @@
                 <TextBlock Grid.Column="12"                                              Text="History"         Style="{StaticResource HeaderTextStyle}"                           Visibility="{x:Bind vm:ColumnLayout.Instance.SparkVis, Mode=OneWay}" />
                 <TextBlock Grid.Column="13" x:Name="HdrUptime"     Tag="Uptime"          Text="Uptime"          Style="{StaticResource HeaderTextStyle}" Tapped="OnSortUptime"     Visibility="{x:Bind vm:ColumnLayout.Instance.UptimeVis, Mode=OneWay}"     HorizontalAlignment="Right" Margin="0,0,10,0" />
                 <TextBlock Grid.Column="14"                                              Text="Probe"           Style="{StaticResource HeaderTextStyle}"                           Visibility="{x:Bind vm:ColumnLayout.Instance.ProbeVis, Mode=OneWay}" />
+                <TextBlock Grid.Column="15"                        Tag="24h %"           Text="24h %"           Style="{StaticResource HeaderTextStyle}"                           Visibility="{x:Bind vm:ColumnLayout.Instance.Avail24hVis, Mode=OneWay}"   HorizontalAlignment="Right" Margin="0,0,10,0" />
+                <TextBlock Grid.Column="16"                        Tag="7d %"            Text="7d %"            Style="{StaticResource HeaderTextStyle}"                           Visibility="{x:Bind vm:ColumnLayout.Instance.Avail7dVis, Mode=OneWay}"    HorizontalAlignment="Right" Margin="0,0,10,0" />
+                <TextBlock Grid.Column="17"                        Tag="30d %"           Text="30d %"           Style="{StaticResource HeaderTextStyle}"                           Visibility="{x:Bind vm:ColumnLayout.Instance.Avail30dVis, Mode=OneWay}"   HorizontalAlignment="Right" Margin="0,0,10,0" />
             </Grid>
         </Border>
 
@@ -325,6 +331,12 @@
                             <ColumnDefinition Width="{x:Bind vm:ColumnLayout.Instance.Spark, Mode=OneWay}" />
                             <ColumnDefinition Width="{x:Bind vm:ColumnLayout.Instance.Uptime, Mode=OneWay}" />
                             <ColumnDefinition Width="{x:Bind vm:ColumnLayout.Instance.Probe, Mode=OneWay}" />
+                            <ColumnDefinition Width="{x:Bind vm:ColumnLayout.Instance.Avail24h, Mode=OneWay}" />
+                            <ColumnDefinition Width="{x:Bind vm:ColumnLayout.Instance.Avail7d, Mode=OneWay}" />
+                            <ColumnDefinition Width="{x:Bind vm:ColumnLayout.Instance.Avail30d, Mode=OneWay}" />
+                    <ColumnDefinition Width="{x:Bind vm:ColumnLayout.Instance.Avail24h, Mode=OneWay}" />
+                    <ColumnDefinition Width="{x:Bind vm:ColumnLayout.Instance.Avail7d, Mode=OneWay}" />
+                    <ColumnDefinition Width="{x:Bind vm:ColumnLayout.Instance.Avail30d, Mode=OneWay}" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
 
@@ -376,6 +388,9 @@
 
                         <TextBlock Grid.Column="13" Text="{x:Bind Uptime, Mode=OneWay}"     Style="{StaticResource NumericCellStyle}" Visibility="{x:Bind vm:ColumnLayout.Instance.UptimeVis, Mode=OneWay}"     Margin="0,0,10,0" Opacity="0.85" />
                         <TextBlock Grid.Column="14" Text="{x:Bind Probe, Mode=OneWay}"      Style="{StaticResource CellTextStyle}"    Visibility="{x:Bind vm:ColumnLayout.Instance.ProbeVis, Mode=OneWay}"      Opacity="0.7" />
+                        <TextBlock Grid.Column="15" Text="{x:Bind Avail24h, Mode=OneWay}"   Style="{StaticResource NumericCellStyle}" Visibility="{x:Bind vm:ColumnLayout.Instance.Avail24hVis, Mode=OneWay}"   Margin="0,0,10,0" />
+                        <TextBlock Grid.Column="16" Text="{x:Bind Avail7d, Mode=OneWay}"    Style="{StaticResource NumericCellStyle}" Visibility="{x:Bind vm:ColumnLayout.Instance.Avail7dVis, Mode=OneWay}"    Margin="0,0,10,0" Opacity="0.85" />
+                        <TextBlock Grid.Column="17" Text="{x:Bind Avail30d, Mode=OneWay}"   Style="{StaticResource NumericCellStyle}" Visibility="{x:Bind vm:ColumnLayout.Instance.Avail30dVis, Mode=OneWay}"   Margin="0,0,10,0" Opacity="0.85" />
                     </Grid>
 
                     <!-- Detail panel, nested under the host it belongs to: the latency graph, and

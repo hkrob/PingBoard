@@ -355,7 +355,12 @@ public sealed class ProbeScheduler : IAsyncDisposable
         // A result that landed while we were going to sleep must not be counted.
         if (_suspended) return;
 
-        var transition = target.Record(result, target.FailuresBeforeDownFrom(settings));
+        // A maintenance window suppresses the alert, never the probe: the board still shows what
+        // happened and the history still records it, so you can see afterwards whether the host
+        // came back when it was supposed to.
+        var quiet = target.InMaintenance(result.When);
+
+        var transition = target.Record(result, target.FailuresBeforeDownFrom(settings), raiseTransitions: !quiet);
         if (transition is not { } t) return;
 
         Transition?.Invoke(t);

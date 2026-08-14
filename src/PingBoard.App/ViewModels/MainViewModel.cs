@@ -187,6 +187,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         var statePath = ConfigStore.StatePathFor(configPath);
         var counters = StateStore.Load(statePath);
         var history = StateStore.LoadHistory(statePath);
+        var availability = StateStore.LoadAvailability(statePath);
 
         _scheduler = new ProbeScheduler(_settings);
         _scheduler.Transition += OnTransition;
@@ -202,6 +203,10 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             // Restored before the row is built, so the sparkline and graph have something to draw
             // on the first frame rather than filling in over the next five minutes.
             if (history.TryGetValue(targetConfig.Name, out var samples)) target.RestoreHistory(samples);
+
+            // Without this the 7- and 30-day figures would reset on every restart, which for a
+            // number whose whole point is spanning weeks would make it meaningless.
+            if (availability.TryGetValue(targetConfig.Name, out var log)) target.RestoreAvailability(log);
 
             _scheduler.AddTarget(target);
             Rows.Add(new TargetRow(target));

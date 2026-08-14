@@ -56,7 +56,7 @@ structurally — it is a separate project — so the part that has to be correct
 stress-tested without XAML in the way.
 
 ```bash
-dotnet run --project src/PingBoard.Harness -- --selftest        # 164 assertions
+dotnet run --project src/PingBoard.Harness -- --selftest        # 192 assertions
 dotnet run --project src/PingBoard.Harness -- board.ini --seconds 300
 ```
 
@@ -162,6 +162,40 @@ configured. The response body is never read, so a target serving a large file co
 configured hostname is used for the request even though the address is resolved separately, because
 connecting by IP alone sends no SNI and the wrong `Host` header, and a virtual host would answer for
 the wrong site.
+
+### Maintenance windows
+
+Scheduled quiet hours, per target:
+
+```ini
+[Target:nas]
+Address=10.1.10.5
+Maintenance=Sat 22:00-02:00, Sun 03:00-05:00
+```
+
+Days are optional (`02:00-04:00` means every day), ranges work (`Mon-Fri`), and a window whose end
+precedes its start runs through midnight.
+
+**Probing carries on; only the alert is held back.** A maintenance window says "I already know
+about this", not "stop watching" — the board still shows the outage and the history still records
+it, so afterwards you can see whether the host came back when it was supposed to.
+
+The part that matters: a host **still down when the window closes alerts then**. If the window
+simply swallowed the transition, a host that died during maintenance and never returned would be
+marked as already-announced and you would never be told. Quiet while you expected the outage; loud
+the moment you did not.
+
+### Availability
+
+`24h %`, `7d %` and `30d %` columns, from hourly buckets kept for thirty days. The rolling window
+is the last few hundred probes — right for "is something wrong now", useless for "was this link
+reliable this week" — and lifetime `Uptime` is the opposite failure, dragged down forever by one
+outage three days ago. These fill the gap.
+
+A period with no data reads `—` rather than 100%. A target added this morning genuinely has no
+thirty-day figure, and showing a perfect one would be a lie of exactly the kind that ends up in
+reports. Paused, suspended and maintenance samples are excluded, so a laptop that sleeps nightly
+does not accumulate fake downtime.
 
 ### Alerting
 

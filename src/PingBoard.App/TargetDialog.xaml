@@ -70,6 +70,12 @@
                       HorizontalAlignment="Left"
                       PlaceholderText="General" />
 
+            <TextBox x:Name="MaintenanceBox"
+                     Header="Maintenance windows (optional)"
+                     PlaceholderText="Sat 22:00-02:00, Sun 03:00-05:00" />
+            <TextBlock FontSize="12" Opacity="0.65" TextWrapping="Wrap"
+                       Text="Quiet hours when this host is expected to be down. Probing carries on and the history still records what happened — only the alerts are held back, so you can see afterwards whether it came back when it should have. A host still down when the window closes alerts then. Days are optional; a window whose end is before its start runs through midnight." />
+
             <ToggleSwitch x:Name="EnabledSwitch" Header="Probing enabled" IsOn="True" />
 
             <Expander Header="Per-target overrides" HorizontalAlignment="Stretch">

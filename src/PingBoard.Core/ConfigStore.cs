@@ -150,6 +150,7 @@ public static class ConfigStore
                 Probe = kind,
                 Port = Math.Clamp(section.GetInt(nameof(TargetConfig.Port), defaultPort), 1, 65535),
                 Path = section.GetString(nameof(TargetConfig.Path), "/").Trim(),
+                Maintenance = section.GetString(nameof(TargetConfig.Maintenance), "").Trim(),
                 ExpectStatus = ClampOrNull(section.GetIntOrNull(nameof(TargetConfig.ExpectStatus)), 100, 599),
                 Enabled = section.GetBool(nameof(TargetConfig.Enabled), true),
                 Tab = section.GetString(nameof(TargetConfig.Tab), "").Trim(),
@@ -337,6 +338,7 @@ public static class ConfigStore
             // Written only when the target actually names a tab, so a board that never used them
             // round-trips byte for byte.
             if (t.Tab is { Length: > 0 }) section.Set(nameof(TargetConfig.Tab), t.Tab);
+            if (t.Maintenance is { Length: > 0 }) section.Set(nameof(TargetConfig.Maintenance), t.Maintenance);
 
             section.SetOptional(nameof(TargetConfig.IntervalMs), t.IntervalMs);
             section.SetOptional(nameof(TargetConfig.TimeoutMs), t.TimeoutMs);
@@ -485,7 +487,36 @@ public static class StateStore
         return result;
     }
 
+    /// <summary>
+    /// Hourly availability buckets per target name, for the 24h/7d/30d figures. Empty when the
+    /// sidecar predates them.
+    /// </summary>
+    public static Dictionary<string, AvailabilityLog> LoadAvailability(string path)
+    {
+        var result = new Dictionary<string, AvailabilityLog>(StringComparer.OrdinalIgnoreCase);
+        if (!File.Exists(path) && !File.Exists(path + ".bak")) return result;
+
+        IniFile ini;
+        try { ini = IniFile.LoadResilient(path); }
+        catch (IOException) { return result; }
+        catch (UnauthorizedAccessException) { return result; }
+
+        foreach (var section in ini.WithPrefix(ConfigStore.TargetPrefix))
+        {
+            var name = section.Name[ConfigStore.TargetPrefix.Length..].Trim();
+            if (name.Length == 0) continue;
+
+            var encoded = section.GetString(AvailabilityKey, "");
+            if (encoded.Length == 0) continue;
+
+            result[name] = AvailabilityLog.Decode(encoded);
+        }
+
+        return result;
+    }
+
     private const string HistoryKey = "History";
+    private const string AvailabilityKey = "Availability";
 
     public static void Save(string path, IEnumerable<PingTarget> targets)
     {
@@ -509,6 +540,9 @@ public static class StateStore
             // pushed below a very long line.
             var history = target.HistorySnapshot();
             if (history.Length > 0) section.Set(HistoryKey, EncodeHistory(history));
+
+            var availability = target.Availability.Encode();
+            if (availability.Length > 0) section.Set(AvailabilityKey, availability);
         }
 
         ini.SaveAtomic(path);

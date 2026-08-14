@@ -36,6 +36,7 @@ public sealed partial class TargetDialog : ContentDialog
             PathBox.Text = config.Path;
             SetOptional(ExpectStatusBox, config.ExpectStatus);
             TabBox.Text = TabConfig.Normalise(config.Tab);
+            MaintenanceBox.Text = config.Maintenance;
 
             SetOptional(IntervalBox, config.IntervalMs);
             SetOptional(TimeoutBox, config.TimeoutMs);
@@ -184,6 +185,17 @@ public sealed partial class TargetDialog : ContentDialog
             return;
         }
 
+        // Rejected here rather than silently ignored. The parser deliberately fails open — a typo
+        // silences nothing — but a user who typed a window and got no warning would reasonably
+        // believe it was in force, and only find out when an alert arrives mid-maintenance.
+        var maintenance = MaintenanceBox.Text.Trim();
+        if (maintenance.Length > 0 && MaintenanceSchedule.Parse(maintenance).IsEmpty)
+        {
+            Reject(args, "Could not read that maintenance window. Use HH:mm-HH:mm, optionally "
+                         + "prefixed with days — for example “Sat 22:00-02:00” or “Mon-Fri 01:30-02:00”.");
+            return;
+        }
+
         Result = new TargetConfig
         {
             Name = name,
@@ -192,6 +204,7 @@ public sealed partial class TargetDialog : ContentDialog
             Port = isIcmp ? 443 : (int)PortBox.Value,
             Enabled = EnabledSwitch.IsOn,
             Tab = TabConfig.Normalise(TabBox.Text),
+            Maintenance = maintenance,
             Path = isHttp ? path : "/",
             ExpectStatus = isHttp ? ReadOptional(ExpectStatusBox) : null,
             IntervalMs = ReadOptional(IntervalBox),

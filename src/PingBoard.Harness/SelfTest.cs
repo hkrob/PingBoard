@@ -25,6 +25,8 @@ internal static class SelfTest
             AtomicWriteKeepsOldFileIntact(scratch);
             CountersRoundTrip(scratch);
             HistorySurvivesRestart(scratch);
+            MaintenanceWindows();
+            AvailabilityOverDays();
             RingBufferRolls();
             RingBufferIgnoresInactiveSamples();
             StatusMapping();
@@ -345,6 +347,145 @@ internal static class SelfTest
         target.Dispose();
         restored.Dispose();
         narrow.Dispose();
+    }
+
+    /// <summary>
+    /// Maintenance windows: parsing, and the rule that decides what happens when one ends.
+    /// </summary>
+    private static void MaintenanceWindows()
+    {
+        // A Wednesday, so day handling is exercised rather than accidentally always matching.
+        var wed0300 = new DateTimeOffset(new DateTime(2026, 8, 12, 3, 0, 0, DateTimeKind.Local));
+        var wed1200 = new DateTimeOffset(new DateTime(2026, 8, 12, 12, 0, 0, DateTimeKind.Local));
+
+        var nightly = MaintenanceSchedule.Parse("02:00-04:00");
+        Check("maintenance: inside a daily window", nightly.Contains(wed0300));
+        Check("maintenance: outside a daily window", !nightly.Contains(wed1200));
+
+        // Boundaries: start inclusive, end exclusive, so back-to-back windows cannot overlap.
+        Check("maintenance: the start minute is inside",
+            nightly.Contains(new DateTimeOffset(new DateTime(2026, 8, 12, 2, 0, 0, DateTimeKind.Local))));
+        Check("maintenance: the end minute is outside",
+            !nightly.Contains(new DateTimeOffset(new DateTime(2026, 8, 12, 4, 0, 0, DateTimeKind.Local))));
+
+        var byDay = MaintenanceSchedule.Parse("Wed 02:00-04:00");
+        Check("maintenance: matches the named day", byDay.Contains(wed0300));
+        Check("maintenance: ignores other days",
+            !byDay.Contains(new DateTimeOffset(new DateTime(2026, 8, 13, 3, 0, 0, DateTimeKind.Local))));
+
+        var weekdays = MaintenanceSchedule.Parse("Mon-Fri 01:00-02:00");
+        Check("maintenance: a day range covers its middle",
+            weekdays.Contains(new DateTimeOffset(new DateTime(2026, 8, 12, 1, 30, 0, DateTimeKind.Local))));
+        Check("maintenance: a day range excludes the weekend",
+            !weekdays.Contains(new DateTimeOffset(new DateTime(2026, 8, 15, 1, 30, 0, DateTimeKind.Local))));
+
+        // Crossing midnight: the evening half belongs to the named day, the morning half to the
+        // day after, which is what "Sat 22:00-02:00" plainly means.
+        var overnight = MaintenanceSchedule.Parse("Sat 22:00-02:00");
+        Check("maintenance: evening of the named day",
+            overnight.Contains(new DateTimeOffset(new DateTime(2026, 8, 15, 23, 0, 0, DateTimeKind.Local))));
+        Check("maintenance: small hours of the following day",
+            overnight.Contains(new DateTimeOffset(new DateTime(2026, 8, 16, 1, 0, 0, DateTimeKind.Local))));
+        Check("maintenance: not the small hours of the named day itself",
+            !overnight.Contains(new DateTimeOffset(new DateTime(2026, 8, 15, 1, 0, 0, DateTimeKind.Local))));
+
+        Check("maintenance: several windows in one setting",
+            MaintenanceSchedule.Parse("02:00-03:00, 13:00-13:30").Contains(wed1200) == false
+            && MaintenanceSchedule.Parse("02:00-03:00, 11:00-13:30").Contains(wed1200));
+
+        // A typo must silence nothing. Failing open is the dangerous direction for a monitor.
+        Check("maintenance: nonsense silences nothing", !MaintenanceSchedule.Parse("garbage").Contains(wed0300));
+        Check("maintenance: an impossible time silences nothing",
+            !MaintenanceSchedule.Parse("25:00-26:00").Contains(wed0300));
+        Check("maintenance: a zero-length window silences nothing",
+            !MaintenanceSchedule.Parse("02:00-02:00").Contains(wed0300));
+        Check("maintenance: blank is empty", MaintenanceSchedule.Parse("").IsEmpty);
+
+        // ---- the suppression rule ----
+        var settings = new Settings { FailuresBeforeDown = 2 };
+        var target = new PingTarget(new TargetConfig { Name = "nas", Address = "10.1.10.5" }, settings);
+        var now = DateTimeOffset.Now;
+
+        StateTransition? fired = null;
+        for (var i = 0; i < 4; i++)
+            fired ??= target.Record(ProbeResult.Fail(TargetStatus.Timeout, 1000 + i, now), 2,
+                                    raiseTransitions: false);
+
+        Check("maintenance: no alert while the window is open", fired is null);
+
+        // The window closes and the host is still down: the alert must arrive now, not never.
+        var afterWindow = target.Record(ProbeResult.Fail(TargetStatus.Timeout, 2000, now), 2);
+        Check("maintenance: a host still down when the window closes does alert",
+            afterWindow is { Up: false });
+
+        // And a host that recovered quietly during the window must not produce a stray "recovered".
+        var other = new PingTarget(new TargetConfig { Name = "nas2", Address = "10.1.10.6" }, settings);
+        for (var i = 0; i < 4; i++)
+            other.Record(ProbeResult.Fail(TargetStatus.Timeout, 3000 + i, now), 2, raiseTransitions: false);
+
+        var quietRecovery = other.Record(ProbeResult.Ok(4, System.Net.IPAddress.Loopback, 3100, now), 2,
+                                         raiseTransitions: false);
+
+        Check("maintenance: a quiet recovery raises nothing", quietRecovery is null);
+
+        var afterQuietRecovery = other.Record(ProbeResult.Ok(4, System.Net.IPAddress.Loopback, 3200, now), 2);
+        Check("maintenance: and nothing is left over to fire afterwards", afterQuietRecovery is null);
+
+        target.Dispose();
+        other.Dispose();
+    }
+
+    /// <summary>Availability over hours and days, and its persistence.</summary>
+    private static void AvailabilityOverDays()
+    {
+        var log = new AvailabilityLog();
+        var now = DateTimeOffset.Now;
+
+        Check("availability: nothing recorded yields null, not 100%", log.Percent(24, now) is null);
+
+        // Ten hours ago: 8 of 10 OK. Two hours ago: 10 of 10.
+        for (var i = 0; i < 10; i++)
+            log.Record(i < 8 ? TargetStatus.Ok : TargetStatus.Timeout, now.AddHours(-10));
+
+        for (var i = 0; i < 10; i++)
+            log.Record(TargetStatus.Ok, now.AddHours(-2));
+
+        var day = log.Percent(24, now);
+        Check("availability: 24h spans both buckets", day is not null && Math.Abs(day.Value - 90) < 0.001);
+
+        // A window that excludes the older bucket sees only the perfect one.
+        var recent = log.Percent(3, now);
+        Check("availability: a shorter window excludes older buckets",
+            recent is not null && Math.Abs(recent.Value - 100) < 0.001);
+
+        // Paused and suspended are not evidence about the target; counting them would sink the
+        // figure every time the machine slept.
+        var ignoring = new AvailabilityLog();
+        ignoring.Record(TargetStatus.Ok, now);
+        ignoring.Record(TargetStatus.Suspended, now);
+        ignoring.Record(TargetStatus.Paused, now);
+        ignoring.Record(TargetStatus.Unknown, now);
+
+        var clean = ignoring.Percent(24, now);
+        Check("availability: inactive samples are excluded entirely",
+            clean is not null && Math.Abs(clean.Value - 100) < 0.001);
+
+        // Round-trip through the sidecar encoding.
+        var restored = AvailabilityLog.Decode(log.Encode());
+        var restoredDay = restored.Percent(24, now);
+        Check("availability: survives an encode/decode round trip",
+            restoredDay is not null && Math.Abs(restoredDay.Value - day!.Value) < 0.001);
+
+        Check("availability: garbage decodes to nothing",
+            AvailabilityLog.Decode("junk,1:2").Percent(24, now) is null);
+        Check("availability: an impossible bucket is rejected",
+            AvailabilityLog.Decode("100:50:10").Percent(24, now) is null);
+
+        // Beyond the ring, the oldest data is simply gone rather than wrapping into the present.
+        var old = new AvailabilityLog();
+        old.Record(TargetStatus.Timeout, now.AddHours(-(AvailabilityLog.MaxHours + 5)));
+        Check("availability: data older than the ring does not resurface",
+            old.Percent(AvailabilityLog.MaxHours, now) is null);
     }
 
     private static void RingBufferRolls()
