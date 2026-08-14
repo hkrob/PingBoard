@@ -21,6 +21,15 @@ public sealed class TargetConfig
     /// </summary>
     public string Tab { get; set; } = "";
 
+    /// <summary>Request path for HTTP probes. Ignored by ICMP and TCP.</summary>
+    public string Path { get; set; } = "/";
+
+    /// <summary>
+    /// Status code an HTTP probe must see, or null to accept any 2xx/3xx. Worth setting when a
+    /// URL legitimately redirects and you want to know if it ever stops.
+    /// </summary>
+    public int? ExpectStatus { get; set; }
+
     // Null means "inherit from [Settings]".
     public int? IntervalMs { get; set; }
     public int? TimeoutMs { get; set; }
@@ -143,8 +152,13 @@ public sealed class PingTarget : IDisposable
 
     public bool IsInFlight => Volatile.Read(ref _inFlight) == 1;
 
-    private static IProbe CreateProbe(ProbeKind kind) =>
-        kind == ProbeKind.Tcp ? new TcpProbe() : new IcmpProbe();
+    private static IProbe CreateProbe(ProbeKind kind) => kind switch
+    {
+        ProbeKind.Tcp => new TcpProbe(),
+        ProbeKind.Http => new HttpProbe(useTls: false),
+        ProbeKind.Https => new HttpProbe(useTls: true),
+        _ => new IcmpProbe(),
+    };
 
     /// <summary>Attempts to claim the in-flight slot. False means a probe is already outstanding.</summary>
     public bool TryBeginProbe() => Interlocked.CompareExchange(ref _inFlight, 1, 0) == 0;
@@ -187,7 +201,10 @@ public sealed class PingTarget : IDisposable
         TimeoutMs: Config.TimeoutMs ?? s.TimeoutMs,
         PayloadBytes: Config.PayloadBytes ?? s.PayloadBytes,
         Ttl: Config.Ttl ?? s.Ttl,
-        Port: Config.Port);
+        Port: Config.Port,
+        Host: Config.Address,
+        Path: Config.Path,
+        ExpectStatus: Config.ExpectStatus ?? 0);
 
     public int IntervalFrom(Settings s) => Config.IntervalMs ?? s.IntervalMs;
 

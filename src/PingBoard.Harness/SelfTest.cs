@@ -38,6 +38,7 @@ internal static class SelfTest
             TraceRouteFindsThePath();
             TabsGroupWithoutGating(scratch);
             UpdateVersionComparison();
+            HttpProbeJudgesTheStatusCode();
         }
         finally
         {
@@ -96,6 +97,43 @@ internal static class SelfTest
         Check("ini: neighbouring target keeps inheriting",
             reloaded.Targets.First(t => t.Name == "lan").FailuresBeforeDown is null);
         Check("ini: global threshold unaffected", reloaded.Settings.FailuresBeforeDown == 3);
+
+        // HTTP targets carry a scheme, a path and optionally a required status code, and each
+        // scheme brings its own conventional port so a config need not state the obvious.
+        var httpPath = Path.Combine(dir, "http.ini");
+        ConfigStore.Save(httpPath, new Settings(),
+        [
+            new TargetConfig { Name = "site", Address = "example.com", Probe = ProbeKind.Https, Port = 443, Path = "/health", ExpectStatus = 200 },
+            new TargetConfig { Name = "plain", Address = "intranet", Probe = ProbeKind.Http, Port = 80 },
+        ]);
+
+        var httpLoaded = ConfigStore.Load(httpPath);
+        var site = httpLoaded.Targets.First(t => t.Name == "site");
+        var plain = httpLoaded.Targets.First(t => t.Name == "plain");
+
+        Check("ini: https probe round-trips", site.Probe == ProbeKind.Https);
+        Check("ini: request path round-trips", site.Path == "/health");
+        Check("ini: required status round-trips", site.ExpectStatus == 200);
+        Check("ini: http probe round-trips", plain.Probe == ProbeKind.Http);
+        Check("ini: http keeps its port", plain.Port == 80);
+
+        // A bare http target with no port stated should land on 80, not on the 443 default that
+        // suits every other probe kind.
+        File.WriteAllText(httpPath, """
+            [Target:bare]
+            Address=intranet
+            Probe=http
+            """, Encoding.UTF8);
+
+        Check("ini: http defaults to port 80", ConfigStore.Load(httpPath).Targets[0].Port == 80);
+
+        File.WriteAllText(httpPath, """
+            [Target:bare]
+            Address=intranet
+            Probe=https
+            """, Encoding.UTF8);
+
+        Check("ini: https defaults to port 443", ConfigStore.Load(httpPath).Targets[0].Port == 443);
 
         // Hand-edited nonsense must be clamped, not carried through as-is — and that applies to
         // every per-target override, not just the threshold. Ttl=0 is the one that bites: it makes
@@ -879,6 +917,97 @@ internal static class SelfTest
             UpdateCheck.ParseVersion("v1.2.0") < UpdateCheck.ParseVersion("v1.3.0"));
         Check("update: 10 sorts above 9, not below",
             UpdateCheck.ParseVersion("v1.10.0") > UpdateCheck.ParseVersion("v1.9.0"));
+    }
+
+    /// <summary>
+    /// The HTTP probe, against a real listener.
+    /// <para>
+    /// The case that justifies the whole probe type is the third one: a server that accepts the
+    /// connection and answers 500. A TCP probe reports that host as perfectly healthy, because the
+    /// socket opened — and a monitor that shows green while the service is broken is worse than no
+    /// monitor, because it is trusted.
+    /// </para>
+    /// </summary>
+    private static void HttpProbeJudgesTheStatusCode()
+    {
+        var port = FreePort();
+        var prefix = $"http://localhost:{port}/";
+
+        using var listener = new System.Net.HttpListener();
+        listener.Prefixes.Add(prefix);
+
+        try
+        {
+            listener.Start();
+        }
+        catch (System.Net.HttpListenerException)
+        {
+            Check("http: SKIPPED - could not bind a local listener", false);
+            return;
+        }
+
+        // Answers by path: /ok -> 200, /boom -> 500, /moved -> 302.
+        _ = Task.Run(async () =>
+        {
+            while (listener.IsListening)
+            {
+                try
+                {
+                    var context = await listener.GetContextAsync().ConfigureAwait(false);
+                    context.Response.StatusCode = context.Request.Url?.AbsolutePath switch
+                    {
+                        "/boom" => 500,
+                        "/moved" => 302,
+                        _ => 200,
+                    };
+                    context.Response.Close();
+                }
+                catch (Exception) { return; }
+            }
+        });
+
+        var probe = new HttpProbe(useTls: false);
+        var address = System.Net.IPAddress.Loopback;
+
+        ProbeResult Run(string path, int expect = 0) => probe
+            .ProbeAsync(address,
+                        new ProbeOptions(TimeoutMs: 5000, PayloadBytes: 0, Ttl: 64, Port: port,
+                                         Host: "localhost", Path: path, ExpectStatus: expect),
+                        CancellationToken.None)
+            .GetAwaiter().GetResult();
+
+        var ok = Run("/ok");
+        Check("http: 200 is OK", ok.Status == TargetStatus.Ok);
+        Check("http: a successful probe records a round-trip time", ok.HasRtt);
+
+        // The point of the probe type.
+        var boom = Run("/boom");
+        Check("http: 500 is a failure, not a success", boom.Status != TargetStatus.Ok);
+        Check("http: 500 reports HTTP ERR rather than a network fault",
+            boom.Status == TargetStatus.HttpError);
+        Check("http: an HTTP error counts as a failure", boom.Status.IsFailure());
+
+        // A redirect is a real answer about this URL and is accepted by default.
+        Check("http: 302 is accepted by default", Run("/moved").Status == TargetStatus.Ok);
+
+        // ...but not when a specific code was demanded.
+        Check("http: 302 fails when 200 was required",
+            Run("/moved", expect: 200).Status == TargetStatus.HttpError);
+        Check("http: the demanded code still passes",
+            Run("/ok", expect: 200).Status == TargetStatus.Ok);
+
+        // Nothing listening on a port that was free a moment ago.
+        var deadPort = FreePort();
+        var refused = probe.ProbeAsync(address,
+            new ProbeOptions(TimeoutMs: 3000, PayloadBytes: 0, Ttl: 64, Port: deadPort,
+                             Host: "localhost", Path: "/"),
+            CancellationToken.None).GetAwaiter().GetResult();
+
+        Check("http: a closed port is not reported as an HTTP error",
+            refused.Status is TargetStatus.Refused or TargetStatus.Unreachable or TargetStatus.Timeout);
+
+        listener.Stop();
+        probe.Dispose();
     }
 
     /// <summary>A port the OS has just confirmed is free, so the test does not collide with a real service.</summary>

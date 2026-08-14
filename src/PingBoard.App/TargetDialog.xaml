@@ -26,6 +26,8 @@
                 <ComboBox x:Name="ProbeBox" Header="Probe" Width="140" SelectionChanged="OnProbeChanged">
                     <ComboBoxItem Content="ICMP ping" />
                     <ComboBoxItem Content="TCP connect" />
+                    <ComboBoxItem Content="HTTP" />
+                    <ComboBoxItem Content="HTTPS" />
                 </ComboBox>
 
                 <!-- Inline, not Compact: Compact renders the spinner as a floating popup on focus,
@@ -44,6 +46,29 @@
                        Opacity="0.65"
                        TextWrapping="Wrap"
                        Text="ICMP echo. If a host silently drops ping — common on firewalled or corporate networks — switch to TCP connect against a port you know is open." />
+
+            <!-- HTTP only. Hidden for ICMP and TCP so the dialog does not grow fields that mean
+                 nothing for the probe that is actually selected. -->
+            <StackPanel x:Name="HttpPanel" Spacing="12" Visibility="Collapsed">
+                <TextBox x:Name="PathBox"
+                         Header="Request path"
+                         PlaceholderText="/" />
+
+                <NumberBox x:Name="ExpectStatusBox"
+                           Header="Required status code (blank = any 2xx or 3xx)"
+                           Width="280"
+                           Minimum="100" Maximum="599"
+                           SpinButtonPlacementMode="Inline"
+                           HorizontalAlignment="Left" />
+            </StackPanel>
+
+            <!-- Editable, so a tab can be created here rather than only by hand-editing the ini. -->
+            <ComboBox x:Name="TabBox"
+                      Header="Tab"
+                      IsEditable="True"
+                      Width="240"
+                      HorizontalAlignment="Left"
+                      PlaceholderText="General" />
 
             <ToggleSwitch x:Name="EnabledSwitch" Header="Probing enabled" IsOn="True" />
 

@@ -298,7 +298,11 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             ? $" · showing {VisibleRows.Count} of {Rows.Count}"
             : "";
 
-        var zoom = ColumnLayout.Instance.IsDefaultZoom ? "" : $" · {ColumnLayout.Instance.ZoomLabel}";
+        // Labelled, not a bare percentage. Sitting beside "6 targets · 6 up · 0 down" an unlabelled
+        // number reads as another statistic about the board rather than a display setting.
+        var zoom = ColumnLayout.Instance.IsDefaultZoom
+            ? ""
+            : $" · zoom {ColumnLayout.Instance.ZoomLabel}";
 
         StatusText = _scheduler.IsSuspended
             ? $"Paused — {_scheduler.SuspendReason}"
@@ -452,6 +456,9 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
         if (changed || index != VisibleRows.Count) RebuildVisibleRows();
     }
+
+    /// <summary>The tab currently on screen, so a new target defaults to where the user is looking.</summary>
+    public string SelectedTabName => _selectedTab;
 
     public void SelectTab(TabItem tab)
     {

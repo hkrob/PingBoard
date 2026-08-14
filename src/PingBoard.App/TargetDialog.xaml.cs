@@ -21,14 +21,21 @@ public sealed partial class TargetDialog : ContentDialog
 
         Title = editing is null ? "Add target" : $"Edit {editing.Name}";
 
+        // Offer the tabs that already exist, but editable so a new one can be created here rather
+        // than only by hand-editing the ini.
+        foreach (var tab in vm.Tabs) TabBox.Items.Add(tab.Name);
+
         if (editing is not null)
         {
             var config = editing.Target.Config;
             AddressBox.Text = config.Address;
             NameBox.Text = config.Name;
-            ProbeBox.SelectedIndex = config.Probe == ProbeKind.Tcp ? 1 : 0;
+            ProbeBox.SelectedIndex = IndexFor(config.Probe);
             PortBox.Value = config.Port;
             EnabledSwitch.IsOn = config.Enabled;
+            PathBox.Text = config.Path;
+            SetOptional(ExpectStatusBox, config.ExpectStatus);
+            TabBox.Text = TabConfig.Normalise(config.Tab);
 
             SetOptional(IntervalBox, config.IntervalMs);
             SetOptional(TimeoutBox, config.TimeoutMs);
@@ -46,6 +53,11 @@ public sealed partial class TargetDialog : ContentDialog
             ClearOptional(PayloadBox);
             ClearOptional(TtlBox);
             ClearOptional(FailuresBox);
+            ClearOptional(ExpectStatusBox);
+
+            // A new target lands in whichever tab is on screen, which is almost always the one
+            // the user meant.
+            TabBox.Text = vm.SelectedTabName;
         }
 
         NameBox.TextChanged += (_, _) => _nameEditedByUser = true;
@@ -79,17 +91,57 @@ public sealed partial class TargetDialog : ContentDialog
 
     private void OnProbeChanged(object sender, SelectionChangedEventArgs e) => UpdateProbeUi();
 
+    private static int IndexFor(ProbeKind kind) => kind switch
+    {
+        ProbeKind.Tcp => 1,
+        ProbeKind.Http => 2,
+        ProbeKind.Https => 3,
+        _ => 0,
+    };
+
+    private static ProbeKind KindFor(int index) => index switch
+    {
+        1 => ProbeKind.Tcp,
+        2 => ProbeKind.Http,
+        3 => ProbeKind.Https,
+        _ => ProbeKind.Icmp,
+    };
+
     private void UpdateProbeUi()
     {
-        var isTcp = ProbeBox.SelectedIndex == 1;
+        var kind = KindFor(ProbeBox.SelectedIndex);
+        var isIcmp = kind == ProbeKind.Icmp;
+        var isHttp = kind is ProbeKind.Http or ProbeKind.Https;
 
-        PortBox.IsEnabled = isTcp;
-        PayloadBox.IsEnabled = !isTcp;
-        TtlBox.IsEnabled = !isTcp;
+        // Payload and TTL shape an ICMP echo and mean nothing to the others.
+        PortBox.IsEnabled = !isIcmp;
+        PayloadBox.IsEnabled = isIcmp;
+        TtlBox.IsEnabled = isIcmp;
 
-        ProbeHint.Text = isTcp
-            ? "TCP connect. A completed handshake proves reachability more strongly than an echo reply, and works against hosts that drop ICMP. A refused connection is reported separately from a timeout — it means the host is up but the port is closed."
-            : "ICMP echo. If a host silently drops ping — common on firewalled or corporate networks — switch to TCP connect against a port you know is open.";
+        HttpPanel.Visibility = isHttp
+            ? Microsoft.UI.Xaml.Visibility.Visible
+            : Microsoft.UI.Xaml.Visibility.Collapsed;
+
+        // Follow the conventional port when switching scheme, unless the user has set something
+        // that is not simply the other scheme's default.
+        if (isHttp)
+        {
+            var current = (int)PortBox.Value;
+            if (kind == ProbeKind.Http && current is 443) PortBox.Value = 80;
+            if (kind == ProbeKind.Https && current is 80) PortBox.Value = 443;
+        }
+
+        ProbeHint.Text = kind switch
+        {
+            ProbeKind.Tcp =>
+                "TCP connect. A completed handshake proves reachability more strongly than an echo reply, and works against hosts that drop ICMP. A refused connection is reported separately from a timeout — it means the host is up but the port is closed.",
+
+            ProbeKind.Http or ProbeKind.Https =>
+                "HTTP request, judged on the status code. A TCP connect to 80 or 443 only proves the socket opens — a wedged server accepts connections and returns 500 to everything, and the board would show it green. Redirects are not followed, so a 301 is reported as it is rather than silently measuring somewhere else.",
+
+            _ =>
+                "ICMP echo. If a host silently drops ping — common on firewalled or corporate networks — switch to TCP connect against a port you know is open.",
+        };
     }
 
     private void OnPrimaryButtonClick(ContentDialog sender, ContentDialogButtonClickEventArgs args)
@@ -119,19 +171,33 @@ public sealed partial class TargetDialog : ContentDialog
             return;
         }
 
-        var isTcp = ProbeBox.SelectedIndex == 1;
+        var kind = KindFor(ProbeBox.SelectedIndex);
+        var isIcmp = kind == ProbeKind.Icmp;
+        var isHttp = kind is ProbeKind.Http or ProbeKind.Https;
+
+        var path = PathBox.Text.Trim();
+        if (path.Length == 0) path = "/";
+
+        if (isHttp && path.Contains(' ', StringComparison.Ordinal))
+        {
+            Reject(args, "A request path cannot contain spaces.");
+            return;
+        }
 
         Result = new TargetConfig
         {
             Name = name,
             Address = address,
-            Probe = isTcp ? ProbeKind.Tcp : ProbeKind.Icmp,
-            Port = isTcp ? (int)PortBox.Value : 443,
+            Probe = kind,
+            Port = isIcmp ? 443 : (int)PortBox.Value,
             Enabled = EnabledSwitch.IsOn,
+            Tab = TabConfig.Normalise(TabBox.Text),
+            Path = isHttp ? path : "/",
+            ExpectStatus = isHttp ? ReadOptional(ExpectStatusBox) : null,
             IntervalMs = ReadOptional(IntervalBox),
             TimeoutMs = ReadOptional(TimeoutBox),
-            PayloadBytes = isTcp ? null : ReadOptional(PayloadBox),
-            Ttl = isTcp ? null : ReadOptional(TtlBox),
+            PayloadBytes = isIcmp ? ReadOptional(PayloadBox) : null,
+            Ttl = isIcmp ? ReadOptional(TtlBox) : null,
             FailuresBeforeDown = ReadOptional(FailuresBox),
         };
     }

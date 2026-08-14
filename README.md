@@ -56,7 +56,7 @@ structurally — it is a separate project — so the part that has to be correct
 stress-tested without XAML in the way.
 
 ```bash
-dotnet run --project src/PingBoard.Harness -- --selftest        # 135 assertions
+dotnet run --project src/PingBoard.Harness -- --selftest        # 151 assertions
 dotnet run --project src/PingBoard.Harness -- board.ini --seconds 300
 ```
 
@@ -130,6 +130,31 @@ numbers. Deleting the sidecar resets all statistics; there is a menu item for th
 would otherwise read as a permanently dead target. A completed TCP handshake also proves more than
 an echo reply does, and a *refused* connection is reported separately from a timeout — it means the
 host is up and the port is closed.
+
+### HTTP probes
+
+`Probe=http` and `Probe=https` go one layer further and judge the status code:
+
+```ini
+[Target:intranet]
+Address=intranet.example.com
+Probe=https
+Path=/health
+ExpectStatus=200          ; optional; blank accepts any 2xx or 3xx
+```
+
+This is the difference between *the socket opens* and *the service works*. A TCP connect to 443
+succeeds against a wedged application server that returns 500 to every request, and the board would
+show it green indefinitely — which is precisely the failure a monitor exists to catch. A bad status
+reports as `HTTP ERR`, kept distinct from a timeout because everything below the application layer
+worked and calling it a network fault sends you to look in the wrong place.
+
+Ports default to 80 and 443 by scheme. **Redirects are not followed** — a 301 is a real answer
+about *this* URL, and chasing it would silently measure a different endpoint than the one
+configured. The response body is never read, so a target serving a large file costs nothing. The
+configured hostname is used for the request even though the address is resolved separately, because
+connecting by IP alone sends no SNI and the wrong `Host` header, and a virtual host would answer for
+the wrong site.
 
 ### Alerting
 

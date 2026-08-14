@@ -29,6 +29,14 @@ public enum TargetStatus
     /// <summary>TCP connect was actively refused (RST). The host is up; the port is closed.</summary>
     Refused,
 
+    /// <summary>
+    /// The server answered with an unacceptable HTTP status. Distinct from every other failure
+    /// here because it is the only one where everything below the application layer worked: DNS
+    /// resolved, the socket opened, TLS completed, a response came back — and the service is still
+    /// broken. Collapsing that into "timeout" would send you to look at the network.
+    /// </summary>
+    HttpError,
+
     /// <summary>Probing disabled for this target by the user.</summary>
     Paused,
 
@@ -47,6 +55,19 @@ public enum ProbeKind
 
     /// <summary>TCP connect to a port. For hosts and firewalls that silently drop ICMP.</summary>
     Tcp,
+
+    /// <summary>
+    /// HTTP request, checking the status code.
+    /// <para>
+    /// A TCP connect to port 80 or 443 proves a socket opens. It does not prove the service works:
+    /// a wedged application server accepts connections and returns 500 forever, and the board
+    /// would show it green throughout. This is the probe that tells the difference.
+    /// </para>
+    /// </summary>
+    Http,
+
+    /// <summary>HTTPS request. A separate kind so the scheme is visible in the config file.</summary>
+    Https,
 }
 
 public static class TargetStatusExtensions
@@ -62,7 +83,8 @@ public static class TargetStatusExtensions
     public static bool IsFailure(this TargetStatus s) => s is TargetStatus.Timeout
         or TargetStatus.Unreachable
         or TargetStatus.DnsFail
-        or TargetStatus.Refused;
+        or TargetStatus.Refused
+        or TargetStatus.HttpError;
 
     /// <summary>True when the target is not being probed, so counters must not move.</summary>
     public static bool IsInactive(this TargetStatus s) => s is TargetStatus.Paused
@@ -77,6 +99,7 @@ public static class TargetStatusExtensions
         TargetStatus.Unreachable => "UNREACHABLE",
         TargetStatus.DnsFail => "DNS FAIL",
         TargetStatus.Refused => "REFUSED",
+        TargetStatus.HttpError => "HTTP ERR",
         TargetStatus.Paused => "PAUSED",
         TargetStatus.Suspended => "SUSPENDED",
         _ => "—",
@@ -93,6 +116,7 @@ public static class TargetStatusExtensions
         TargetStatus.Unreachable => "", // NetworkOffline
         TargetStatus.DnsFail => "",     // Error
         TargetStatus.Refused => "",     // Cancel
+        TargetStatus.HttpError => "",   // Globe
         TargetStatus.Paused => "",      // Pause
         TargetStatus.Suspended => "",   // QuietHours
         _ => "",                        // Unknown

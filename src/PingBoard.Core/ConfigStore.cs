@@ -129,7 +129,18 @@ public static class ConfigStore
             var kind = section.GetString(nameof(TargetConfig.Probe), "icmp").Trim().ToLowerInvariant() switch
             {
                 "tcp" => ProbeKind.Tcp,
+                "http" => ProbeKind.Http,
+                "https" => ProbeKind.Https,
                 _ => ProbeKind.Icmp,
+            };
+
+            // Each scheme carries its own conventional port, so a target that names one need not
+            // also state the obvious.
+            var defaultPort = kind switch
+            {
+                ProbeKind.Http => 80,
+                ProbeKind.Https => 443,
+                _ => 443,
             };
 
             targets.Add(new TargetConfig
@@ -137,7 +148,9 @@ public static class ConfigStore
                 Name = name,
                 Address = address,
                 Probe = kind,
-                Port = Math.Clamp(section.GetInt(nameof(TargetConfig.Port), 443), 1, 65535),
+                Port = Math.Clamp(section.GetInt(nameof(TargetConfig.Port), defaultPort), 1, 65535),
+                Path = section.GetString(nameof(TargetConfig.Path), "/").Trim(),
+                ExpectStatus = ClampOrNull(section.GetIntOrNull(nameof(TargetConfig.ExpectStatus)), 100, 599),
                 Enabled = section.GetBool(nameof(TargetConfig.Enabled), true),
                 Tab = section.GetString(nameof(TargetConfig.Tab), "").Trim(),
 
@@ -303,8 +316,22 @@ public static class ConfigStore
         {
             var section = ini.GetOrAdd(TargetPrefix + t.Name);
             section.Set(nameof(TargetConfig.Address), t.Address);
-            section.Set(nameof(TargetConfig.Probe), t.Probe == ProbeKind.Tcp ? "tcp" : "icmp");
-            if (t.Probe == ProbeKind.Tcp) section.Set(nameof(TargetConfig.Port), t.Port);
+            section.Set(nameof(TargetConfig.Probe), t.Probe switch
+            {
+                ProbeKind.Tcp => "tcp",
+                ProbeKind.Http => "http",
+                ProbeKind.Https => "https",
+                _ => "icmp",
+            });
+
+            if (t.Probe is ProbeKind.Tcp or ProbeKind.Http or ProbeKind.Https)
+                section.Set(nameof(TargetConfig.Port), t.Port);
+
+            if (t.Probe is ProbeKind.Http or ProbeKind.Https)
+            {
+                if (t.Path is { Length: > 0 } && t.Path != "/") section.Set(nameof(TargetConfig.Path), t.Path);
+                section.SetOptional(nameof(TargetConfig.ExpectStatus), t.ExpectStatus);
+            }
             if (!t.Enabled) section.Set(nameof(TargetConfig.Enabled), false);
 
             // Written only when the target actually names a tab, so a board that never used them

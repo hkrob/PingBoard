@@ -6,7 +6,22 @@ using System.Net.Sockets;
 namespace PingBoard.Core;
 
 /// <summary>Options for a single probe, resolved from global settings plus per-target overrides.</summary>
-public readonly record struct ProbeOptions(int TimeoutMs, int PayloadBytes, int Ttl, int Port);
+/// <param name="Host">
+/// The address exactly as configured. HTTP needs it even though the caller has already resolved an
+/// IP: connecting by address alone sends no SNI and the wrong Host header, so a virtual host
+/// answers for the wrong site or the TLS handshake fails outright. The resolved IP still drives
+/// the board's IP column.
+/// </param>
+/// <param name="Path">Request path for HTTP probes.</param>
+/// <param name="ExpectStatus">Required status code, or 0 to accept any 2xx/3xx.</param>
+public readonly record struct ProbeOptions(
+    int TimeoutMs,
+    int PayloadBytes,
+    int Ttl,
+    int Port,
+    string Host = "",
+    string Path = "/",
+    int ExpectStatus = 0);
 
 /// <summary>
 /// A probe bound to one target. Instances are per-target and stateful — see
@@ -155,6 +170,131 @@ public sealed class TcpProbe : IProbe
         {
             client?.Dispose();
         }
+    }
+
+    public void Dispose() { }
+}
+
+/// <summary>
+/// HTTP(S) request, judged on the status code.
+/// <para>
+/// The probe that can tell "the socket opens" from "the service works". A TCP connect to 443
+/// succeeds against a wedged application server that returns 500 to every request, and the board
+/// would show it green indefinitely — which is the failure mode a monitor exists to catch.
+/// </para>
+/// <para>
+/// Three deliberate choices. <b>Redirects are not followed:</b> a 301 is a real answer about this
+/// URL, and following it silently measures a different endpoint than the one configured. <b>The
+/// response body is never read:</b> only the headers are needed, so a target serving a large file
+/// costs nothing. <b>A non-success status is its own failure kind</b> rather than a timeout,
+/// because everything below the application layer worked and reporting it as a network fault
+/// sends you to look in the wrong place.
+/// </para>
+/// </summary>
+public sealed class HttpProbe(bool useTls) : IProbe
+{
+    /// <summary>
+    /// Shared across every HTTP target. One handler pools connections; a client per probe would
+    /// open a fresh TCP connection — and a fresh TLS handshake — on every single request, which
+    /// would measure our own setup cost rather than the server's response time.
+    /// </summary>
+    private static readonly HttpClient Client = new(new SocketsHttpHandler
+    {
+        AllowAutoRedirect = false,
+        PooledConnectionLifetime = TimeSpan.FromMinutes(2),
+    })
+    {
+        // Per-request cancellation supplies the real timeout; this only stops a stuck request
+        // living forever if that is ever missed.
+        Timeout = Timeout.InfiniteTimeSpan,
+    };
+
+    private readonly bool _useTls = useTls;
+
+    public async Task<ProbeResult> ProbeAsync(IPAddress address, ProbeOptions options, CancellationToken ct)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(options.TimeoutMs);
+
+        var start = Stopwatch.GetTimestamp();
+
+        try
+        {
+            var uri = BuildUri(address, options);
+
+            // HEAD first would be cheaper, but plenty of servers answer it with 405 while serving
+            // GET perfectly well, which would report a healthy site as broken.
+            using var request = new HttpRequestMessage(HttpMethod.Get, uri);
+
+            using var response = await Client
+                .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token)
+                .ConfigureAwait(false);
+
+            var rtt = (int)Math.Round(Stopwatch.GetElapsedTime(start).TotalMilliseconds);
+            var code = (int)response.StatusCode;
+
+            var ok = options.ExpectStatus > 0
+                ? code == options.ExpectStatus
+                : code is >= 200 and < 400;
+
+            return ok
+                ? ProbeResult.Ok(rtt, address, Environment.TickCount64, DateTimeOffset.Now)
+                : ProbeResult.Fail(TargetStatus.HttpError, Environment.TickCount64, DateTimeOffset.Now,
+                                   IPStatus.Success, address);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (OperationCanceledException)
+        {
+            return ProbeResult.Fail(TargetStatus.Timeout, Environment.TickCount64, DateTimeOffset.Now,
+                                    IPStatus.TimedOut, address);
+        }
+        catch (HttpRequestException ex)
+        {
+            // Connection-level trouble: refused, unresolvable, or a TLS handshake that failed.
+            var status = ex.InnerException is SocketException socket
+                ? socket.SocketErrorCode switch
+                {
+                    SocketError.ConnectionRefused => TargetStatus.Refused,
+                    SocketError.HostUnreachable or SocketError.NetworkUnreachable => TargetStatus.Unreachable,
+                    _ => TargetStatus.Timeout,
+                }
+                : TargetStatus.Unreachable;
+
+            return ProbeResult.Fail(status, Environment.TickCount64, DateTimeOffset.Now,
+                                    IPStatus.Unknown, address);
+        }
+        catch (Exception ex) when (ex is UriFormatException or InvalidOperationException)
+        {
+            return ProbeResult.Fail(TargetStatus.Unreachable, Environment.TickCount64, DateTimeOffset.Now,
+                                    IPStatus.BadDestination, address);
+        }
+    }
+
+    /// <summary>
+    /// Builds the request URL from the configured host, falling back to the resolved address when
+    /// no host was recorded. A bracketed literal is required for IPv6 or the port parses wrongly.
+    /// </summary>
+    private Uri BuildUri(IPAddress address, ProbeOptions options)
+    {
+        var host = options.Host.Length > 0 ? options.Host : address.ToString();
+
+        if (IPAddress.TryParse(host, out var literal)
+            && literal.AddressFamily == AddressFamily.InterNetworkV6)
+        {
+            host = "[" + host + "]";
+        }
+
+        var scheme = _useTls ? "https" : "http";
+        var path = options.Path.Length == 0 ? "/" : options.Path;
+        if (!path.StartsWith('/')) path = "/" + path;
+
+        var defaultPort = _useTls ? 443 : 80;
+        var authority = options.Port == defaultPort ? host : $"{host}:{options.Port}";
+
+        return new Uri($"{scheme}://{authority}{path}");
     }
 
     public void Dispose() { }
