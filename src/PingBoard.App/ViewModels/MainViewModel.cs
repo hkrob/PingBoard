@@ -670,6 +670,42 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         ApplySort();
     }
 
+    /// <summary>
+    /// Adds several targets at once, skipping any whose name or address is already on the board.
+    /// <para>
+    /// One save and one re-sort at the end rather than per target: adding a catalogue category is
+    /// forty writes of the config file otherwise, each one rewriting the whole thing.
+    /// </para>
+    /// </summary>
+    /// <returns>How many were actually added, so the caller can say what happened.</returns>
+    public int AddTargets(IEnumerable<TargetConfig> configs)
+    {
+        var added = 0;
+
+        foreach (var config in configs)
+        {
+            if (NameExists(config.Name)) continue;
+            if (Rows.Any(r => string.Equals(r.Target.Config.Address, config.Address, StringComparison.OrdinalIgnoreCase)))
+                continue;
+
+            EnsureTab(config.Tab);
+
+            var target = new PingTarget(config, _settings);
+            _scheduler.AddTarget(target);
+            Rows.Add(new TargetRow(target));
+            added++;
+        }
+
+        if (added == 0) return 0;
+
+        ApplyTabStateToTargets();
+        SaveConfig();
+        ApplySort();
+        FitColumnsNow();
+
+        return added;
+    }
+
     /// <summary>Adds a tab for <paramref name="name"/> if the board does not have one already.</summary>
     private void EnsureTab(string? name)
     {

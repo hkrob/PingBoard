@@ -194,6 +194,16 @@ public sealed class ColumnLayout : INotifyPropertyChanged
     public double GlyphFontSize => Math.Round(12 * _zoom, 1);
     public double ChevronFontSize => Math.Round(10 * _zoom, 1);
 
+    /// <summary>
+    /// Toolbar text and glyphs. Every control up there is a Control with its own FontSize from its
+    /// style, so none of them inherit and each has to be told explicitly — the same reason the row
+    /// cells needed binding.
+    /// </summary>
+    public double ToolbarFontSize => Math.Round(13 * _zoom, 1);
+
+    /// <summary>Tab strip labels, a little smaller than the toolbar.</summary>
+    public double TabFontSize => Math.Round(12 * _zoom, 1);
+
     /// <summary>Percentage for the status bar, so the current zoom is discoverable.</summary>
     public string ZoomLabel => $"{Math.Round(_zoom * 100)}%";
 
@@ -263,6 +273,7 @@ public sealed class ColumnLayout : INotifyPropertyChanged
                  {
                      nameof(TotalWidth), nameof(RowHeight), nameof(CellFontSize),
                      nameof(HeaderFontSize), nameof(GlyphFontSize), nameof(ChevronFontSize),
+                     nameof(ToolbarFontSize), nameof(TabFontSize),
                      nameof(Zoom), nameof(ZoomLabel), nameof(IsDefaultZoom),
                  })
         {

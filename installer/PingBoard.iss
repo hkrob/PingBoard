@@ -8,7 +8,7 @@
 ; Output lands in installer\output\PingBoard-<version>-setup.exe.
 
 #define AppName        "PingBoard"
-#define AppVersion     "1.7.0"
+#define AppVersion     "1.8.0"
 #define AppPublisher   "hkrob"
 #define AppExeName     "PingBoard.App.exe"
 #define AppUrl         "https://github.com/hkrob/PingBoard"
@@ -109,3 +109,4 @@ begin
   Exec('taskkill.exe', '/F /IM {#AppExeName}', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Result := True;
 end;
+

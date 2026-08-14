@@ -43,7 +43,8 @@
                             AutomationProperties.Name="{x:Bind Name}">
                         <StackPanel Orientation="Horizontal" Spacing="6">
                             <TextBlock Text="&#xE711;"
-                                       FontFamily="Segoe Fluent Icons" FontSize="10"
+                                       FontFamily="Segoe Fluent Icons"
+                                       FontSize="{x:Bind vm:ColumnLayout.Instance.ChevronFontSize, Mode=OneWay}"
                                        VerticalAlignment="Center"
                                        Visibility="{x:Bind DisabledMarkVisibility, Mode=OneWay}" />
                             <TextBlock Text="{x:Bind Label, Mode=OneWay}"
@@ -83,31 +84,31 @@
              or a panel, neither of which yields an accessible name, and a ToolTip does not supply
              one either. Without these a screen reader announces nothing at all for these controls. -->
         <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="4" Padding="10,2,10,8">
-            <Button Click="OnAddTarget" ToolTipService.ToolTip="Add target (Ins)"
+            <Button FontSize="{x:Bind vm:ColumnLayout.Instance.ToolbarFontSize, Mode=OneWay}" Click="OnAddTarget" ToolTipService.ToolTip="Add target (Ins)"
                     AutomationProperties.Name="Add target">
                 <StackPanel Orientation="Horizontal" Spacing="8">
-                    <TextBlock Text="&#xE710;" FontFamily="Segoe Fluent Icons" FontSize="13" />
+                    <TextBlock Text="&#xE710;" FontFamily="Segoe Fluent Icons" FontSize="{x:Bind vm:ColumnLayout.Instance.ToolbarFontSize, Mode=OneWay}" />
                     <TextBlock Text="Add" />
                 </StackPanel>
             </Button>
-            <Button Click="OnEditTarget" ToolTipService.ToolTip="Edit selected target (F2)"
+            <Button FontSize="{x:Bind vm:ColumnLayout.Instance.ToolbarFontSize, Mode=OneWay}" Click="OnEditTarget" ToolTipService.ToolTip="Edit selected target (F2)"
                     AutomationProperties.Name="Edit selected target">
-                <TextBlock Text="&#xE70F;" FontFamily="Segoe Fluent Icons" FontSize="13" />
+                <TextBlock Text="&#xE70F;" FontFamily="Segoe Fluent Icons" FontSize="{x:Bind vm:ColumnLayout.Instance.ToolbarFontSize, Mode=OneWay}" />
             </Button>
-            <Button Click="OnRemoveTarget" ToolTipService.ToolTip="Remove selected target (Del)"
+            <Button FontSize="{x:Bind vm:ColumnLayout.Instance.ToolbarFontSize, Mode=OneWay}" Click="OnRemoveTarget" ToolTipService.ToolTip="Remove selected target (Del)"
                     AutomationProperties.Name="Remove selected target">
-                <TextBlock Text="&#xE74D;" FontFamily="Segoe Fluent Icons" FontSize="13" />
+                <TextBlock Text="&#xE74D;" FontFamily="Segoe Fluent Icons" FontSize="{x:Bind vm:ColumnLayout.Instance.ToolbarFontSize, Mode=OneWay}" />
             </Button>
-            <Button Click="OnTogglePause" ToolTipService.ToolTip="Pause or resume selected target"
+            <Button FontSize="{x:Bind vm:ColumnLayout.Instance.ToolbarFontSize, Mode=OneWay}" Click="OnTogglePause" ToolTipService.ToolTip="Pause or resume selected target"
                     AutomationProperties.Name="Pause or resume selected target">
-                <TextBlock Text="&#xE769;" FontFamily="Segoe Fluent Icons" FontSize="13" />
+                <TextBlock Text="&#xE769;" FontFamily="Segoe Fluent Icons" FontSize="{x:Bind vm:ColumnLayout.Instance.ToolbarFontSize, Mode=OneWay}" />
             </Button>
 
             <AppBarSeparator />
 
-            <Button ToolTipService.ToolTip="Choose columns" AutomationProperties.Name="Choose columns">
+            <Button FontSize="{x:Bind vm:ColumnLayout.Instance.ToolbarFontSize, Mode=OneWay}" ToolTipService.ToolTip="Choose columns" AutomationProperties.Name="Choose columns">
                 <StackPanel Orientation="Horizontal" Spacing="8">
-                    <TextBlock Text="&#xE71D;" FontFamily="Segoe Fluent Icons" FontSize="13" />
+                    <TextBlock Text="&#xE71D;" FontFamily="Segoe Fluent Icons" FontSize="{x:Bind vm:ColumnLayout.Instance.ToolbarFontSize, Mode=OneWay}" />
                     <TextBlock Text="Columns" />
                 </StackPanel>
                 <Button.Flyout>
@@ -117,11 +118,11 @@
 
             <!-- Mute. The glyph reflects live state rather than the last click, so an expired
                  timed mute shows as un-muted without anyone having to touch it. -->
-            <Button x:Name="MuteButton"
+            <Button FontSize="{x:Bind vm:ColumnLayout.Instance.ToolbarFontSize, Mode=OneWay}" x:Name="MuteButton"
                     ToolTipService.ToolTip="{x:Bind Vm.MuteTooltip, Mode=OneWay}"
                     AutomationProperties.Name="Mute desktop notifications">
                 <TextBlock Text="{x:Bind Vm.MuteGlyph, Mode=OneWay}"
-                           FontFamily="Segoe Fluent Icons" FontSize="13" />
+                           FontFamily="Segoe Fluent Icons" FontSize="{x:Bind vm:ColumnLayout.Instance.ToolbarFontSize, Mode=OneWay}" />
                 <Button.Flyout>
                     <MenuFlyout Placement="Bottom">
                         <MenuFlyoutItem Text="Mute for 1 hour"    Click="OnMuteHour" />
@@ -135,14 +136,14 @@
 
             <!-- Filter. Note what it does not do: filtered-out targets keep being probed and keep
                  alerting. A search box that quietly stopped monitoring would be a trap. -->
-            <AutoSuggestBox PlaceholderText="Filter name, IP or hostname"
+            <AutoSuggestBox FontSize="{x:Bind vm:ColumnLayout.Instance.ToolbarFontSize, Mode=OneWay}" PlaceholderText="Filter name, IP or hostname"
                             Text="{x:Bind Vm.FilterText, Mode=TwoWay}"
                             QueryIcon="Find"
                             Width="220"
                             VerticalAlignment="Center"
                             AutomationProperties.Name="Filter targets" />
 
-            <ComboBox SelectedIndex="{x:Bind Vm.StatusFilterIndex, Mode=TwoWay}"
+            <ComboBox FontSize="{x:Bind vm:ColumnLayout.Instance.ToolbarFontSize, Mode=OneWay}" SelectedIndex="{x:Bind Vm.StatusFilterIndex, Mode=TwoWay}"
                       VerticalAlignment="Center"
                       MinWidth="118"
                       ToolTipService.ToolTip="Filter by status"
@@ -155,15 +156,15 @@
 
             <AppBarSeparator />
 
-            <Button Click="OnAbout"
+            <Button FontSize="{x:Bind vm:ColumnLayout.Instance.ToolbarFontSize, Mode=OneWay}" Click="OnAbout"
                     ToolTipService.ToolTip="About PingBoard, and check for updates"
                     AutomationProperties.Name="About PingBoard">
-                <TextBlock Text="&#xE946;" FontFamily="Segoe Fluent Icons" FontSize="13" />
+                <TextBlock Text="&#xE946;" FontFamily="Segoe Fluent Icons" FontSize="{x:Bind vm:ColumnLayout.Instance.ToolbarFontSize, Mode=OneWay}" />
             </Button>
 
-            <Button ToolTipService.ToolTip="File, statistics and settings"
+            <Button FontSize="{x:Bind vm:ColumnLayout.Instance.ToolbarFontSize, Mode=OneWay}" ToolTipService.ToolTip="File, statistics and settings"
                     AutomationProperties.Name="File, statistics and settings">
-                <TextBlock Text="&#xE712;" FontFamily="Segoe Fluent Icons" FontSize="13" />
+                <TextBlock Text="&#xE712;" FontFamily="Segoe Fluent Icons" FontSize="{x:Bind vm:ColumnLayout.Instance.ToolbarFontSize, Mode=OneWay}" />
                 <Button.Flyout>
                     <MenuFlyout Placement="Bottom">
                         <MenuFlyoutItem Text="Open config…" Click="OnOpenConfig">
@@ -203,6 +204,10 @@
                         <ToggleMenuFlyoutItem x:Name="StartWithWindows"
                                               Text="Start with Windows"
                                               Click="OnToggleAutostart" />
+                        <MenuFlyoutSeparator />
+                        <MenuFlyoutItem Text="Add well-known hosts…" Click="OnAddWellKnownHosts">
+                            <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE774;" /></MenuFlyoutItem.Icon>
+                        </MenuFlyoutItem>
                         <MenuFlyoutSeparator />
                         <MenuFlyoutItem Text="Settings…" Click="OnSettings">
                             <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE713;" /></MenuFlyoutItem.Icon>

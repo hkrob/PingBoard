@@ -276,6 +276,18 @@ public sealed partial class BoardView : UserControl
         }
     }
 
+    private async void OnAddWellKnownHosts(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            await AddHostsDialog.ShowAsync(XamlRoot, Vm);
+        }
+        catch (Exception ex)
+        {
+            CrashLog.Write(ex);
+        }
+    }
+
     private async void OnAbout(object sender, RoutedEventArgs e)
     {
         try

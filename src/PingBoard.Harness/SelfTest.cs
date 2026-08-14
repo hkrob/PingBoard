@@ -26,6 +26,7 @@ internal static class SelfTest
             CountersRoundTrip(scratch);
             HistorySurvivesRestart(scratch);
             MaintenanceWindows();
+            HostCatalogIsUsable();
             AvailabilityOverDays();
             RingBufferRolls();
             RingBufferIgnoresInactiveSamples();
@@ -486,6 +487,71 @@ internal static class SelfTest
         old.Record(TargetStatus.Timeout, now.AddHours(-(AvailabilityLog.MaxHours + 5)));
         Check("availability: data older than the ring does not resurface",
             old.Percent(AvailabilityLog.MaxHours, now) is null);
+    }
+
+    /// <summary>
+    /// The ready-made host categories, and the discovery of this machine's own network.
+    /// </summary>
+    private static void HostCatalogIsUsable()
+    {
+        Check("catalog: has categories", HostCatalog.Categories.Count > 0);
+
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var addresses = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var allValid = true;
+        var everyCategoryPopulated = true;
+
+        foreach (var category in HostCatalog.Categories)
+        {
+            if (category.Entries.Count == 0) everyCategoryPopulated = false;
+
+            foreach (var entry in category.Entries)
+            {
+                // Target names key the persisted counters, so a duplicate anywhere in the
+                // catalogue would silently merge two hosts' statistics on import.
+                if (!names.Add(entry.Name)) allValid = false;
+                if (!addresses.Add(entry.Address)) allValid = false;
+
+                if (entry.Name.Length == 0 || entry.Address.Length == 0) allValid = false;
+                if (entry.Address.Contains(' ', StringComparison.Ordinal)) allValid = false;
+
+                // An address must be a bare host, never a URL: the scheme comes from the probe
+                // kind, and "https://x" would be handed to DNS verbatim.
+                if (entry.Address.Contains("://", StringComparison.Ordinal)) allValid = false;
+                if (entry.Address.Contains('/', StringComparison.Ordinal)) allValid = false;
+            }
+        }
+
+        Check("catalog: every category has entries", everyCategoryPopulated);
+        Check("catalog: names and addresses are unique and well formed", allValid);
+
+        // Websites are probed over HTTPS on purpose - ICMP to a name like google.com lands on an
+        // anycast edge and says nothing about the service.
+        var websites = HostCatalog.Categories.First(c => c.Name == "Large websites");
+        Check("catalog: websites use HTTPS rather than ping",
+            websites.Entries.All(e => e.Probe == ProbeKind.Https));
+
+        var dns = HostCatalog.Categories.First(c => c.Name == "Public DNS");
+        Check("catalog: resolvers use ICMP", dns.Entries.All(e => e.Probe == ProbeKind.Icmp));
+        Check("catalog: resolvers are literal addresses, not names",
+            dns.Entries.All(e => System.Net.IPAddress.TryParse(e.Address, out _)));
+
+        // Discovery runs against this machine's real adapters.
+        var local = HostCatalog.DetectLocalNetwork();
+
+        // Windows lists fec0:0:0:ffff::1-3 as placeholder IPv6 resolvers on almost every machine.
+        // They answer nothing, so importing them would mean three permanently red rows.
+        Check("catalog: no IPv6 site-local placeholder resolvers",
+            local.All(e => !System.Net.IPAddress.Parse(e.Address).IsIPv6SiteLocal));
+        Check("catalog: nothing detected is loopback or unspecified",
+            local.All(e => !System.Net.IPAddress.IsLoopback(System.Net.IPAddress.Parse(e.Address))));
+        Check("catalog: detected names are unique",
+            local.Select(e => e.Name).Distinct(StringComparer.OrdinalIgnoreCase).Count() == local.Count);
+        Check("catalog: detected addresses are unique",
+            local.Select(e => e.Address).Distinct(StringComparer.OrdinalIgnoreCase).Count() == local.Count);
+
+        Console.WriteLine($"        (detected {local.Count} local hosts: "
+                          + string.Join(", ", local.Select(e => $"{e.Name}={e.Address}")) + ")");
     }
 
     private static void RingBufferRolls()

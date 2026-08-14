@@ -56,7 +56,7 @@ structurally — it is a separate project — so the part that has to be correct
 stress-tested without XAML in the way.
 
 ```bash
-dotnet run --project src/PingBoard.Harness -- --selftest        # 192 assertions
+dotnet run --project src/PingBoard.Harness -- --selftest        # 202 assertions
 dotnet run --project src/PingBoard.Harness -- board.ini --seconds 300
 ```
 
@@ -93,6 +93,27 @@ IntervalMs=5000            ; any [Settings] key can be overridden per target
 Address=nas.local
 Enabled=false              ; paused
 ```
+
+### Well-known hosts
+
+⚙ → **Add well-known hosts…** populates a board in one click. Each group lands in its own tab:
+
+**Local network** — this machine's own gateway and resolvers, discovered rather than guessed. The
+most useful group by far, because the first question during an outage is whether the fault is local
+or everything past it. Windows' placeholder `fec0::/10` IPv6 resolvers are filtered out; importing
+them would mean three permanently red rows on a healthy machine.
+
+**Public DNS · Large websites · Social media · Cloud platforms · Developer services · Streaming and
+gaming · Email providers.**
+
+Resolvers are probed with ICMP — they answer it, and it is the lightest check. Websites are probed
+over **HTTPS**, because a ping to a name like `google.com` lands on whichever anycast edge is
+nearest: it proves the internet works and says nothing about the service, and many of them drop
+ICMP outright.
+
+The lists are deliberately short. A category with forty entries is not a starting point, it is a
+chore to prune — and every target is real traffic on every interval, forever. Hosts already on the
+board are skipped.
 
 ### Tabs
 
