@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.Globalization;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Microsoft.UI.Dispatching;
+using Microsoft.UI.Xaml;
 using PingBoard.Core;
 
 namespace PingBoard.App.ViewModels;
@@ -62,7 +63,70 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         _autosaveTimer.Tick += (_, _) => SaveCountersIfDirty();
     }
 
+    /// <summary>
+    /// Every row on the board, across all tabs. Persistence, counters and duplicate-name checks all
+    /// work from this — filtering it to the selected tab would mean the next save wrote only the
+    /// visible targets and silently deleted the rest.
+    /// </summary>
     public ObservableCollection<TargetRow> Rows { get; } = [];
+
+    /// <summary>The rows the board actually shows: those in the selected tab.</summary>
+    public ObservableCollection<TargetRow> VisibleRows { get; } = [];
+
+    public ObservableCollection<TabItem> Tabs { get; } = [];
+
+    /// <summary>Tab definitions as they will be written back to the config.</summary>
+    private List<TabConfig> _tabs = [];
+
+    private string _selectedTab = TabConfig.DefaultName;
+
+    /// <summary>
+    /// Free-text filter over name, IP and hostname.
+    /// <para>
+    /// A filter is a view over the board, never a change to it: filtered-out targets keep being
+    /// probed, keep their counters, and still raise alerts. Anything else would turn a search box
+    /// into a way to silently stop monitoring.
+    /// </para>
+    /// </summary>
+    [ObservableProperty] public partial string FilterText { get; set; } = "";
+
+    /// <summary>Status filter: 0 = all, 1 = problems only, 2 = OK only, 3 = paused/idle only.</summary>
+    [ObservableProperty] public partial int StatusFilterIndex { get; set; }
+
+    [ObservableProperty] public partial Visibility FilterActiveVisibility { get; private set; } = Visibility.Collapsed;
+
+    partial void OnFilterTextChanged(string value) => RebuildVisibleRows();
+
+    partial void OnStatusFilterIndexChanged(int value) => RebuildVisibleRows();
+
+    /// <summary>True when this row passes the tab, text and status filters.</summary>
+    private bool Passes(TargetRow row)
+    {
+        if (!string.Equals(TabConfig.Normalise(row.Target.Config.Tab), _selectedTab, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        if (FilterText is { Length: > 0 } text)
+        {
+            var hit = row.Name.Contains(text, StringComparison.OrdinalIgnoreCase)
+                      || row.Ip.Contains(text, StringComparison.OrdinalIgnoreCase)
+                      || row.Hostname.Contains(text, StringComparison.OrdinalIgnoreCase);
+
+            if (!hit) return false;
+        }
+
+        var status = row.Snapshot.Status;
+
+        return StatusFilterIndex switch
+        {
+            1 => status.IsFailure(),
+            2 => status.IsOk(),
+            3 => status is TargetStatus.Paused or TargetStatus.Suspended or TargetStatus.Unknown,
+            _ => true,
+        };
+    }
+
+    /// <summary>The tab strip is hidden entirely until there is more than one group to choose.</summary>
+    [ObservableProperty] public partial Visibility TabStripVisibility { get; private set; } = Visibility.Collapsed;
 
     [ObservableProperty] public partial string ConfigPath { get; private set; } = "";
     [ObservableProperty] public partial string StatusText { get; private set; } = "";
@@ -73,6 +137,11 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     /// raise no notification and repaint nothing.
     /// </summary>
     [ObservableProperty] public partial string Clock { get; private set; } = "";
+    /// <summary>Bell or crossed-out bell, from Segoe Fluent Icons. Driven by live mute state.</summary>
+    [ObservableProperty] public partial string MuteGlyph { get; private set; } = "";
+
+    [ObservableProperty] public partial string MuteTooltip { get; private set; } = "Mute desktop notifications";
+
     [ObservableProperty] public partial string BannerText { get; private set; } = "";
     [ObservableProperty] public partial bool BannerVisible { get; private set; }
     [ObservableProperty] public partial SortKey Sort { get; private set; } = SortKey.Name;
@@ -120,6 +189,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         _scheduler = new ProbeScheduler(_settings);
         _scheduler.Transition += OnTransition;
         _scheduler.SuspendChanged += OnSuspendChanged;
+        _scheduler.TraceCompleted += OnTraceCompleted;
 
         Rows.Clear();
         foreach (var targetConfig in config.Targets)
@@ -143,6 +213,8 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         _scheduler.Start();
         _refreshTimer.Start();
         _autosaveTimer.Start();
+
+        BuildTabs(config.Tabs);
 
         ApplySort();
         RefreshRows();
@@ -169,6 +241,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
         _scheduler.Transition -= OnTransition;
         _scheduler.SuspendChanged -= OnSuspendChanged;
+        _scheduler.TraceCompleted -= OnTraceCompleted;
         await _scheduler.DisposeAsync().ConfigureAwait(true);
 
         // After the scheduler, so a transition raised during its drain is still queued, and the
@@ -209,11 +282,30 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             ? " · ⚠ " + (error.Length > 60 ? error[..60] + "…" : error)
             : "";
 
+        RefreshMuteState();
+        RefreshTabs();
+        RefreshFilterMembership();
+
+        // Shown for the same reason as the alert failure above: being muted is a state you must be
+        // able to see, or you will trust a monitor that has been told to stay quiet.
+        var muted = NotificationMute.Describe() is { } description ? " · 🔕 " + description : "";
+
+        // A filter hides rows, so say so. Counts that silently describe a subset of the board are
+        // how someone concludes everything is fine while looking at three of forty targets.
+        var filtered = VisibleRows.Count != Rows.Count
+            ? $" · showing {VisibleRows.Count} of {Rows.Count}"
+            : "";
+
+        var zoom = ColumnLayout.Instance.IsDefaultZoom ? "" : $" · {ColumnLayout.Instance.ZoomLabel}";
+
         StatusText = _scheduler.IsSuspended
             ? $"Paused — {_scheduler.SuspendReason}"
             : $"{Rows.Count} targets · {up} up · {down} down"
               + (idle > 0 ? $" · {idle} idle" : "")
-              + alertProblem;
+              + filtered
+              + zoom
+              + alertProblem
+              + muted;
 
         // Re-sorting on a status-dependent key would make rows jump under the cursor at 4 Hz.
         // Sorting is applied on demand instead, when the user picks a column.
@@ -250,12 +342,155 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         return "";
     }
 
+    /// <summary>
+    /// A failure trace has finished. Arrives seconds after the transition that caused it, on a
+    /// threadpool thread; the row already holds the result, so this only has to persist it.
+    /// </summary>
+    private void OnTraceCompleted(TraceResult trace) => _log?.WriteTrace(trace);
+
     private void OnSuspendChanged(bool suspended, string reason) =>
         _dispatcher.TryEnqueue(() =>
         {
             if (suspended) ShowBanner($"Probing paused — {reason}. Counters are frozen.");
             else HideBanner();
         });
+
+    /// <summary>
+    /// Syncs the mute button to actual state. Called from the refresh tick as well as on click,
+    /// so a timed mute that lapses on its own is reflected without any user action.
+    /// </summary>
+    public void RefreshMuteState()
+    {
+        var muted = NotificationMute.IsMuted;
+
+        // RingerSilent / Ringer.
+        MuteGlyph = muted ? "" : "";
+        MuteTooltip = NotificationMute.Describe() ?? "Mute desktop notifications";
+    }
+
+    /// <summary>
+    /// Runs a trace for one row on request. Returns null when the target has no resolved address.
+    /// </summary>
+    public Task<TraceResult?> TraceNowAsync(TargetRow row) => _scheduler.TraceNowAsync(row.Target);
+
+    // ---------------------------------------------------------------- tabs
+
+    /// <summary>Rebuilds the tab strip from the loaded configuration.</summary>
+    private void BuildTabs(IReadOnlyList<TabConfig> tabs)
+    {
+        _tabs = tabs.Count > 0 ? [.. tabs.Select(t => t.Clone())] : [new TabConfig()];
+
+        Tabs.Clear();
+        foreach (var tab in _tabs)
+            Tabs.Add(new TabItem(tab.Name) { IsEnabled = tab.Enabled });
+
+        if (!_tabs.Any(t => string.Equals(t.Name, _selectedTab, StringComparison.OrdinalIgnoreCase)))
+            _selectedTab = _tabs[0].Name;
+
+        ApplyTabStateToTargets();
+        RebuildVisibleRows();
+    }
+
+    /// <summary>
+    /// Pushes each tab's enabled state onto its targets. This is the only thing tab state does to
+    /// the engine — nothing anywhere asks which tab is <em>selected</em>, because a background tab
+    /// must keep being probed. A tab you are not looking at is exactly where an outage hides.
+    /// </summary>
+    private void ApplyTabStateToTargets()
+    {
+        foreach (var row in Rows)
+        {
+            var name = TabConfig.Normalise(row.Target.Config.Tab);
+            var tab = _tabs.Find(t => string.Equals(t.Name, name, StringComparison.OrdinalIgnoreCase));
+            row.Target.TabEnabled = tab?.Enabled ?? true;
+        }
+    }
+
+    private void RebuildVisibleRows()
+    {
+        VisibleRows.Clear();
+
+        foreach (var row in Rows)
+            if (Passes(row))
+                VisibleRows.Add(row);
+
+        TabStripVisibility = Tabs.Count > 1 ? Visibility.Visible : Visibility.Collapsed;
+        FilterActiveVisibility = FilterText.Length > 0 || StatusFilterIndex != 0
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+    }
+
+    /// <summary>
+    /// Re-applies the filters if — and only if — membership actually changed.
+    /// <para>
+    /// A status filter is live: rows join and leave it as targets fail and recover. But rebuilding
+    /// the collection every tick would drop the user's selection and scroll position four times a
+    /// second, so the set is compared first and the list is only touched when it really differs.
+    /// </para>
+    /// </summary>
+    private void RefreshFilterMembership()
+    {
+        if (StatusFilterIndex == 0) return;      // only a status filter can change under us
+
+        var changed = false;
+        var index = 0;
+
+        foreach (var row in Rows)
+        {
+            if (!Passes(row)) continue;
+
+            if (index >= VisibleRows.Count || !ReferenceEquals(VisibleRows[index], row))
+            {
+                changed = true;
+                break;
+            }
+
+            index++;
+        }
+
+        if (changed || index != VisibleRows.Count) RebuildVisibleRows();
+    }
+
+    public void SelectTab(TabItem tab)
+    {
+        if (string.Equals(_selectedTab, tab.Name, StringComparison.OrdinalIgnoreCase)) return;
+
+        _selectedTab = tab.Name;
+        RebuildVisibleRows();
+    }
+
+    /// <summary>Switches a whole group of targets on or off, and persists the choice.</summary>
+    public void SetTabEnabled(TabItem tab, bool enabled)
+    {
+        tab.IsEnabled = enabled;
+
+        var config = _tabs.Find(t => string.Equals(t.Name, tab.Name, StringComparison.OrdinalIgnoreCase));
+        if (config is not null) config.Enabled = enabled;
+
+        ApplyTabStateToTargets();
+        SaveConfig();
+    }
+
+    /// <summary>Refreshes each tab's tally. Called from the render tick, like everything else.</summary>
+    private void RefreshTabs()
+    {
+        foreach (var tab in Tabs)
+        {
+            var total = 0;
+            var down = 0;
+
+            foreach (var row in Rows)
+            {
+                if (!string.Equals(TabConfig.Normalise(row.Target.Config.Tab), tab.Name, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                total++;
+                if (row.Snapshot.Status.IsFailure()) down++;
+            }
+
+            tab.Update(total, down, string.Equals(tab.Name, _selectedTab, StringComparison.OrdinalIgnoreCase));
+        }
+    }
 
     /// <summary>Asks every row to re-resolve its status brush after a palette change.</summary>
     public void RefreshStatusBrushes()
@@ -314,6 +549,9 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             if (current != target) Rows.Move(current, target);
         }
 
+        // The visible list takes its order from Rows, so it has to follow a re-sort.
+        RebuildVisibleRows();
+
         // Sorting by status puts what is broken at the top, which is the only ordering that
         // matters when something is wrong.
         static int Rank(TargetRow row) => row.Snapshot.Status switch
@@ -355,17 +593,37 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
     public void AddTarget(TargetConfig config)
     {
+        // A target added into a tab that does not exist yet brings that tab into being, so the new
+        // host is reachable rather than orphaned behind a tab nobody can select.
+        EnsureTab(config.Tab);
+
         var target = new PingTarget(config, _settings);
         _scheduler.AddTarget(target);
         Rows.Add(new TargetRow(target));
+
+        ApplyTabStateToTargets();
         SaveConfig();
         ApplySort();
     }
 
+    /// <summary>Adds a tab for <paramref name="name"/> if the board does not have one already.</summary>
+    private void EnsureTab(string? name)
+    {
+        var normalised = TabConfig.Normalise(name);
+        if (_tabs.Any(t => string.Equals(t.Name, normalised, StringComparison.OrdinalIgnoreCase))) return;
+
+        _tabs.Add(new TabConfig { Name = normalised, Order = _tabs.Count });
+        Tabs.Add(new TabItem(normalised));
+    }
+
     public void UpdateTarget(TargetRow row, TargetConfig config)
     {
+        EnsureTab(config.Tab);
+
         row.Target.UpdateConfig(config);
         row.Refresh();
+
+        ApplyTabStateToTargets();
         SaveConfig();
         ApplySort();
     }
@@ -373,6 +631,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     public void RemoveTarget(TargetRow row)
     {
         Rows.Remove(row);
+        VisibleRows.Remove(row);
         _scheduler.RemoveTarget(row.Target);
         SaveConfig();
     }
@@ -432,7 +691,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
         try
         {
-            ConfigStore.Save(ConfigPath, _settings, Rows.Select(r => r.Target.Config), _alertSettings);
+            ConfigStore.Save(ConfigPath, _settings, Rows.Select(r => r.Target.Config), _alertSettings, _tabs);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {

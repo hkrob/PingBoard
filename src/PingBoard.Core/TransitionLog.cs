@@ -70,6 +70,44 @@ public sealed class TransitionLog : IDisposable
         }
     }
 
+    /// <summary>
+    /// Appends a failure trace to a sibling <c>.traces.txt</c>.
+    /// <para>
+    /// Separate from the CSV on purpose: a trace is a dozen lines of hops, and forcing that into
+    /// one cell would ruin the thing the CSV is good at — being opened in a spreadsheet and sorted.
+    /// The two are correlated by target name and timestamp.
+    /// </para>
+    /// </summary>
+    public void WriteTrace(in TraceResult trace)
+    {
+        if (_disposed) return;
+
+        var text = new StringBuilder()
+            .Append("=== ").Append(trace.When.ToString("o", CultureInfo.InvariantCulture))
+            .Append("  ").Append(trace.TargetName)
+            .Append("  -> ").Append(trace.Destination.ToString())
+            .AppendLine()
+            .AppendLine(trace.Summary())
+            .AppendLine(trace.ToText())
+            .AppendLine()
+            .ToString();
+
+        lock (_gate)
+        {
+            try
+            {
+                File.AppendAllText(TracePath, text, Encoding.UTF8);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // Same contract as the CSV: losing a diagnostic beats interrupting monitoring.
+            }
+        }
+    }
+
+    /// <summary>Sibling file holding failure traces: <c>events.csv</c> → <c>events.csv.traces.txt</c>.</summary>
+    public string TracePath => _path + ".traces.txt";
+
     private void RotateIfNeeded()
     {
         if (!File.Exists(_path) || new FileInfo(_path).Length < MaxBytes) return;

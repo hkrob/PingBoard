@@ -102,10 +102,20 @@ public readonly record struct AlertPayload(
         Threshold: t.Threshold,
         Host: Environment.MachineName);
 
+    /// <summary>
+    /// "name (1.2.3.4)", or bare "name" when there is no address to report.
+    /// <para>
+    /// A DNS failure never resolved to anything, so the address is legitimately empty — and
+    /// "bad-name () is DOWN" reads like a bug in the alert rather than a fact about the network,
+    /// which is not what you want to be parsing at 3am.
+    /// </para>
+    /// </summary>
+    private string Where => Address.Length == 0 ? Target : $"{Target} ({Address})";
+
     /// <summary>One-line summary, used as the mail subject and as the webhook's <c>text</c> field.</summary>
     public string Summary() => Event == "down"
-        ? $"{Host}: {Target} ({Address}) is DOWN — {Status} after {Threshold} consecutive failures"
-        : $"{Host}: {Target} ({Address}) recovered after {FormatDuration(OutageSeconds)}";
+        ? $"{Host}: {Where} is DOWN — {Status} after {Threshold} consecutive failures"
+        : $"{Host}: {Where} recovered after {FormatDuration(OutageSeconds)}";
 
     public string Body()
     {
@@ -113,7 +123,7 @@ public readonly record struct AlertPayload(
         sb.AppendLine(Summary());
         sb.AppendLine();
         sb.Append("Target:    ").AppendLine(Target);
-        sb.Append("Address:   ").AppendLine(Address);
+        sb.Append("Address:   ").AppendLine(Address.Length == 0 ? "(unresolved)" : Address);
         sb.Append("Event:     ").AppendLine(Event);
         sb.Append("Status:    ").AppendLine(Status);
         sb.Append("When:      ").AppendLine(When.ToString("yyyy-MM-dd HH:mm:ss zzz", CultureInfo.InvariantCulture));

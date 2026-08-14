@@ -1,0 +1,47 @@
+using CommunityToolkit.Mvvm.ComponentModel;
+using Microsoft.UI.Xaml;
+
+namespace PingBoard.App.ViewModels;
+
+/// <summary>
+/// One tab in the strip above the board.
+/// <para>
+/// Carries a live tally rather than just a name, because the whole point of putting hosts in
+/// separate tabs is that you are not looking at most of them: a tab that says "WAN 1 down" is
+/// doing the job even while another tab is on screen. A bare label would make grouping actively
+/// dangerous — it would hide problems behind a tab nobody clicked.
+/// </para>
+/// </summary>
+public sealed partial class TabItem : ObservableObject
+{
+    public TabItem(string name) => Name = name;
+
+    public string Name { get; }
+
+    [ObservableProperty] public partial bool IsSelected { get; set; }
+
+    /// <summary>False stops every target in this tab from being probed.</summary>
+    [ObservableProperty] public partial bool IsEnabled { get; set; } = true;
+
+    /// <summary>"LAN", or "LAN · 2 down" when something in it is failing.</summary>
+    [ObservableProperty] public partial string Label { get; private set; } = "";
+
+    /// <summary>Struck through and dimmed when the tab is switched off.</summary>
+    [ObservableProperty] public partial double TabOpacity { get; private set; } = 1.0;
+
+    [ObservableProperty] public partial Visibility DisabledMarkVisibility { get; private set; } = Visibility.Collapsed;
+
+    /// <summary>Highlight for the selected tab. A plain bool would need a converter in XAML.</summary>
+    [ObservableProperty] public partial double SelectionOpacity { get; private set; } = 0.55;
+
+    public void Update(int total, int down, bool selected)
+    {
+        IsSelected = selected;
+
+        Label = down > 0 ? $"{Name} · {down} down" : $"{Name} · {total}";
+
+        TabOpacity = IsEnabled ? 1.0 : 0.45;
+        DisabledMarkVisibility = IsEnabled ? Visibility.Collapsed : Visibility.Visible;
+        SelectionOpacity = selected ? 1.0 : 0.55;
+    }
+}

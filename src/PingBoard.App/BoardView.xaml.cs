@@ -31,7 +31,15 @@ public sealed partial class BoardView : UserControl
         // by another tool, or by the uninstaller, and the menu should show what is actually true.
         StartWithWindows.IsChecked = Autostart.IsEnabled;
 
+        AddZoomAccelerators();
+
         KeyDown += OnKeyDown;
+
+        // Focus the board once it is up. Keyboard accelerators only fire when focus is somewhere
+        // inside their scope, and a freshly opened window has focus nowhere — so Ctrl+= did
+        // nothing until the user happened to click a row first. This also makes Ins, Del and F2
+        // work immediately rather than after a click, which was always the case and always wrong.
+        Loaded += (_, _) => BoardList.Focus(FocusState.Programmatic);
     }
 
     public MainViewModel Vm { get; }
@@ -229,6 +237,170 @@ public sealed partial class BoardView : UserControl
     public event Action<string>? ThemeChanged;
 
     /// <summary>
+    /// Expands or collapses the hop rows under a target. The button lives inside the item
+    /// template, so its DataContext is the row it belongs to.
+    /// </summary>
+    private void OnToggleDetail(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: TargetRow row }) row.ToggleDetail();
+    }
+
+    /// <summary>
+    /// Traces the right-clicked target on demand, rather than waiting for it to fail. Useful on a
+    /// target that is merely slow, or to capture a known-good path to compare against later.
+    /// </summary>
+    private async void OnTraceNow(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: TargetRow row }) return;
+
+        row.BeginTrace();
+
+        try
+        {
+            // The row picks the finished trace up through its normal refresh; only the "could not
+            // run at all" case needs reporting here.
+            if (await Vm.TraceNowAsync(row).ConfigureAwait(true) is null)
+                row.TraceUnavailable("No resolved address for this target — nothing to trace. "
+                                     + "A name that will not resolve fails at DNS, not along the path.");
+        }
+        catch (Exception ex)
+        {
+            // An async void handler that throws takes the process down with it.
+            CrashLog.Write(ex);
+            row.TraceUnavailable("Trace failed: " + ex.Message);
+        }
+    }
+
+    // ---------------------------------------------------------------- zoom
+
+    /// <summary>Raised when the zoom changes, so the window can persist it.</summary>
+    public event Action<double>? ZoomChanged;
+
+    /// <summary>
+    /// Ctrl+wheel zooms; a bare wheel scrolls as usual.
+    /// <para>
+    /// Marked handled only when Ctrl is down, so the ListView still receives every ordinary wheel
+    /// event and scrolling is untouched.
+    /// </para>
+    /// </summary>
+    private void OnBoardPointerWheel(object sender, PointerRoutedEventArgs e)
+    {
+        if (!IsControlDown()) return;
+
+        var delta = e.GetCurrentPoint(this).Properties.MouseWheelDelta;
+        if (delta == 0) return;
+
+        if (delta > 0) ColumnLayout.Instance.ZoomIn();
+        else ColumnLayout.Instance.ZoomOut();
+
+        ZoomChanged?.Invoke(ColumnLayout.Instance.Zoom);
+        e.Handled = true;
+    }
+
+    /// <summary>
+    /// Registers Ctrl with plus, minus and zero as accelerators rather than handling them in
+    /// <c>KeyDown</c>.
+    /// <para>
+    /// KeyDown only fires when something inside the board has focus, so a shortcut wired that way
+    /// does nothing while the caret sits in the filter box — which is exactly where it will be
+    /// when someone decides the text is too small. An accelerator fires for the whole control
+    /// regardless of what holds focus.
+    /// </para>
+    /// <para>
+    /// Both the number row and the keypad are registered. Binding only one leaves half the users
+    /// pressing a key that does nothing.
+    /// </para>
+    /// </summary>
+    private void AddZoomAccelerators()
+    {
+        var layout = ColumnLayout.Instance;
+
+        Register(VirtualKey.Add, layout.ZoomIn);
+        Register((VirtualKey)0xBB, layout.ZoomIn);           // OemPlus, '=' unshifted
+        Register(VirtualKey.Subtract, layout.ZoomOut);
+        Register((VirtualKey)0xBD, layout.ZoomOut);          // OemMinus
+        Register(VirtualKey.Number0, layout.ZoomReset);
+        Register(VirtualKey.NumberPad0, layout.ZoomReset);
+
+        void Register(VirtualKey key, Action apply)
+        {
+            var accelerator = new KeyboardAccelerator
+            {
+                Modifiers = VirtualKeyModifiers.Control,
+                Key = key,
+            };
+
+            accelerator.Invoked += (_, args) =>
+            {
+                apply();
+                ZoomChanged?.Invoke(ColumnLayout.Instance.Zoom);
+                args.Handled = true;
+            };
+
+            KeyboardAccelerators.Add(accelerator);
+        }
+    }
+
+    private static bool IsControlDown() =>
+        Microsoft.UI.Input.InputKeyboardSource
+            .GetKeyStateForCurrentThread(VirtualKey.Control)
+            .HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down);
+
+    // ---------------------------------------------------------------- tabs
+
+    private void OnSelectTab(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: TabItem tab }) Vm.SelectTab(tab);
+    }
+
+    private void OnEnableTab(object sender, RoutedEventArgs e) => SetTabEnabled(sender, true);
+    private void OnDisableTab(object sender, RoutedEventArgs e) => SetTabEnabled(sender, false);
+
+    /// <summary>
+    /// Switching a tab off pauses every target in it. Note that this is the <em>only</em> thing a
+    /// tab does to the engine — selecting a different tab changes what is on screen and nothing
+    /// else, because the hosts you are not looking at are exactly the ones worth still probing.
+    /// </summary>
+    private void SetTabEnabled(object sender, bool enabled)
+    {
+        if (sender is FrameworkElement { DataContext: TabItem tab }) Vm.SetTabEnabled(tab, enabled);
+    }
+
+    // ---------------------------------------------------------------- mute
+
+    /// <summary>Raised when the mute changes, so the window can persist it across a restart.</summary>
+    public event Action? MuteChanged;
+
+    private void OnMuteHour(object sender, RoutedEventArgs e) => SetMute(TimeSpan.FromHours(1));
+    private void OnMuteTwelveHours(object sender, RoutedEventArgs e) => SetMute(TimeSpan.FromHours(12));
+
+    private void OnMuteIndefinitely(object sender, RoutedEventArgs e)
+    {
+        NotificationMute.MuteIndefinitely();
+        AfterMuteChanged();
+    }
+
+    private void OnUnmute(object sender, RoutedEventArgs e)
+    {
+        NotificationMute.Unmute();
+        AfterMuteChanged();
+    }
+
+    private void SetMute(TimeSpan duration)
+    {
+        NotificationMute.MuteFor(duration);
+        AfterMuteChanged();
+    }
+
+    private void AfterMuteChanged()
+    {
+        // Refresh immediately rather than waiting up to 250 ms for the next tick — the user just
+        // clicked, and a button that does not visibly change reads as one that did not work.
+        Vm.RefreshMuteState();
+        MuteChanged?.Invoke();
+    }
+
+    /// <summary>
     /// Re-resolves the brushes that XAML binds only once, and asks every row to re-resolve its
     /// status colour.
     /// <para>
@@ -360,6 +532,10 @@ public sealed partial class BoardView : UserControl
 
     private void OnKeyDown(object sender, KeyRoutedEventArgs e)
     {
+        // Ctrl-modified keys are claimed by the zoom accelerators before reaching here; guarding
+        // anyway so Ctrl+Delete can never be read as "remove the selected target".
+        if (IsControlDown()) return;
+
         switch (e.Key)
         {
             case VirtualKey.Insert:

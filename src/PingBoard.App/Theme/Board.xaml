@@ -61,8 +61,13 @@
     <x:Double x:Key="RowFontSize">13</x:Double>
     <FontFamily x:Key="NumericFont">Consolas</FontFamily>
 
+    <!--
+        Neither style sets FontSize. That is what makes zoom work: font size is an inherited
+        property, so the header container and the board each set it once from the shared
+        ColumnLayout, and every cell follows. A Setter here would override the inherited value and
+        pin the text at a fixed size while the columns around it grew.
+    -->
     <Style x:Key="HeaderTextStyle" TargetType="TextBlock">
-        <Setter Property="FontSize" Value="12" />
         <Setter Property="FontWeight" Value="SemiBold" />
         <Setter Property="Opacity" Value="0.75" />
         <Setter Property="VerticalAlignment" Value="Center" />
@@ -70,7 +75,6 @@
     </Style>
 
     <Style x:Key="CellTextStyle" TargetType="TextBlock">
-        <Setter Property="FontSize" Value="{StaticResource RowFontSize}" />
         <Setter Property="VerticalAlignment" Value="Center" />
         <Setter Property="TextTrimming" Value="CharacterEllipsis" />
     </Style>

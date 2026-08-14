@@ -57,6 +57,15 @@ public sealed class ProbeScheduler : IAsyncDisposable
     private int _outstanding;
 
     /// <summary>
+    /// Concurrent traces. Deliberately tiny: when an uplink drops, every target crosses the down
+    /// threshold within seconds of the others, and forty simultaneous traces would put a burst of
+    /// ICMP on a network that is by definition already in trouble — while measuring mostly our own
+    /// queueing. Traces that cannot get a slot are skipped, not queued; the transition has already
+    /// been reported and a diagnostic taken minutes late describes a different network.
+    /// </summary>
+    private readonly SemaphoreSlim _traceSlots = new(2, 2);
+
+    /// <summary>
     /// Set while the machine is asleep or the local NIC is down. Probing halts and every target
     /// reads Suspended — the single most important guard against garbage data, because without it
     /// closing a laptop lid manufactures thousands of failures and an alert storm on wake.
@@ -75,6 +84,13 @@ public sealed class ProbeScheduler : IAsyncDisposable
 
     /// <summary>Raised when a target crosses the up/down threshold. Never on every failed probe.</summary>
     public event Action<StateTransition>? Transition;
+
+    /// <summary>
+    /// Raised when a failure trace finishes. Always well after the <see cref="Transition"/> that
+    /// triggered it — a trace takes seconds — so consumers must treat it as a follow-up rather
+    /// than as part of the alert.
+    /// </summary>
+    public event Action<TraceResult>? TraceCompleted;
 
     /// <summary>Raised when suspend state changes, so the UI can show why probing has stopped.</summary>
     public event Action<bool, string>? SuspendChanged;
@@ -213,7 +229,7 @@ public sealed class ProbeScheduler : IAsyncDisposable
             // A disabled target goes back to Paused, not Unknown — otherwise it would sit reading
             // "Suspended" until the next tick corrected it.
             foreach (var t in Targets)
-                t.ForceStatus(t.Config.Enabled ? TargetStatus.Unknown : TargetStatus.Paused);
+                t.ForceStatus(t.IsActive ? TargetStatus.Unknown : TargetStatus.Paused);
         }
 
         SuspendChanged?.Invoke(suspended, _suspendReason);
@@ -234,7 +250,10 @@ public sealed class ProbeScheduler : IAsyncDisposable
                 {
                     if (ct.IsCancellationRequested) break;
 
-                    if (!target.Config.Enabled)
+                    // Paused covers both "this host is paused" and "this host's tab is switched
+                    // off". Note what is deliberately absent: nothing here asks which tab is on
+                    // screen. A target in a background tab is probed exactly like any other.
+                    if (!target.IsActive)
                     {
                         target.ForceStatus(TargetStatus.Paused);
                         continue;
@@ -337,7 +356,86 @@ public sealed class ProbeScheduler : IAsyncDisposable
         if (_suspended) return;
 
         var transition = target.Record(result, target.FailuresBeforeDownFrom(settings));
-        if (transition is { } t) Transition?.Invoke(t);
+        if (transition is not { } t) return;
+
+        Transition?.Invoke(t);
+
+        // Down only. Tracing a recovery would describe a path that is working again, which is the
+        // question nobody is asking.
+        if (!t.Up && settings.TraceOnFailure) _ = TraceFailureAsync(target, settings);
+    }
+
+    /// <summary>
+    /// Traces on request, regardless of the target's state or the <c>TraceOnFailure</c> setting.
+    /// <para>
+    /// Unlike the automatic trace this <em>waits</em> for a slot rather than skipping: a user who
+    /// asked for a trace is watching for an answer, and silently doing nothing because two other
+    /// traces happened to be running would look like a broken menu item.
+    /// </para>
+    /// </summary>
+    /// <returns>Null when the target has no resolved address — a name that will not resolve has no
+    /// path to trace, and the failure is at the DNS layer rather than along the route.</returns>
+    public async Task<TraceResult?> TraceNowAsync(PingTarget target, CancellationToken ct = default)
+    {
+        if (target.ResolvedAddress is not { } address) return null;
+
+        var settings = _settings;
+        await _traceSlots.WaitAsync(ct).ConfigureAwait(false);
+
+        try
+        {
+            var options = new TraceOptions(settings.TraceMaxHops, settings.TraceHopTimeoutMs, StopAfterSilentHops: 5);
+            var result = await TraceRoute.RunAsync(target.Config.Name, address, options, ct).ConfigureAwait(false);
+
+            target.SetLastTrace(result);
+            TraceCompleted?.Invoke(result);
+            return result;
+        }
+        finally
+        {
+            _traceSlots.Release();
+        }
+    }
+
+    /// <summary>
+    /// Captures where the path breaks, at the moment it breaks.
+    /// <para>
+    /// Fire-and-forget and fully isolated: this runs outside the probe loop, holds no probe slot,
+    /// and swallows everything. A diagnostic that could delay or fail a probe would be worse than
+    /// no diagnostic at all.
+    /// </para>
+    /// </summary>
+    private async Task TraceFailureAsync(PingTarget target, Settings settings)
+    {
+        // Skipped rather than queued when both slots are busy — see _traceSlots.
+        if (!_traceSlots.Wait(0, CancellationToken.None)) return;
+
+        try
+        {
+            var ct = _cts?.Token ?? CancellationToken.None;
+
+            // The last address we actually probed. A target whose name stopped resolving has none,
+            // and there is nothing to trace to — the failure is at the DNS layer, not on the path.
+            if (target.ResolvedAddress is not { } address) return;
+
+            var options = new TraceOptions(settings.TraceMaxHops, settings.TraceHopTimeoutMs, StopAfterSilentHops: 5);
+            var result = await TraceRoute.RunAsync(target.Config.Name, address, options, ct).ConfigureAwait(false);
+
+            target.SetLastTrace(result);
+            TraceCompleted?.Invoke(result);
+        }
+        catch (OperationCanceledException)
+        {
+            // Shutting down.
+        }
+        catch (Exception)
+        {
+            // Best-effort by definition.
+        }
+        finally
+        {
+            _traceSlots.Release();
+        }
     }
 
     private async Task ReverseLookupAsync(PingTarget target, System.Net.IPAddress address, CancellationToken ct)
@@ -356,5 +454,6 @@ public sealed class ProbeScheduler : IAsyncDisposable
         await StopAsync().ConfigureAwait(false);
         foreach (var t in Targets) t.Dispose();
         _concurrency.Dispose();
+        _traceSlots.Dispose();
     }
 }

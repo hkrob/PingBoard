@@ -43,6 +43,24 @@ public sealed partial class MainWindow : Window
             _uiState.Save();
         };
 
+        // Restored before the first refresh tick, so a mute that was in force at shutdown is still
+        // in force at startup rather than lifting itself silently.
+        NotificationMute.Restore(_uiState.MuteUntil);
+
+        _board.MuteChanged += () =>
+        {
+            _uiState.MuteUntil = NotificationMute.Serialize();
+            _uiState.Save();
+        };
+
+        ColumnLayout.Instance.Zoom = _uiState.ZoomPercent / 100.0;
+
+        _board.ZoomChanged += zoom =>
+        {
+            _uiState.ZoomPercent = (int)Math.Round(zoom * 100);
+            _uiState.Save();
+        };
+
         // Extending into the title bar is what makes Mica read as one continuous surface rather
         // than a themed window with a grey strip bolted on top.
         ExtendsContentIntoTitleBar = true;
@@ -298,6 +316,11 @@ public sealed partial class MainWindow : Window
     private void OnTransition(StateTransition transition)
     {
         if (!Vm.Settings.NotifyOnChange) return;
+
+        // Muted suppresses the popup only. Webhook and email alerting is left running on purpose:
+        // it exists to reach you when you are away from this machine, and silencing it because
+        // someone quietened a desktop toast would be the opposite of what they asked for.
+        if (NotificationMute.IsMuted) return;
 
         // Transitions only, never individual failed probes — and the engine emits none at all
         // while suspended, so waking from sleep is silent rather than a burst of forty toasts.

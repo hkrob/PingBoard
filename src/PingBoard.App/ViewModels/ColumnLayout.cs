@@ -25,7 +25,9 @@ public sealed class ColumnLayout : INotifyPropertyChanged
     // the column index of every other cell stable.
     private static readonly Dictionary<string, double> Natural = new()
     {
-        [nameof(Status)] = 132,
+        // Wider than the text needs: the leading cell also carries the trace expander, and the
+        // header binds the same value, so the two stay aligned without touching anything else.
+        [nameof(Status)] = 152,
         [nameof(Name)] = 130,
         [nameof(Ip)] = 130,
         [nameof(Hostname)] = 200,
@@ -78,7 +80,49 @@ public sealed class ColumnLayout : INotifyPropertyChanged
     public GridLength Probe => Width(nameof(Probe));
 
     private GridLength Width([CallerMemberName] string id = "") =>
-        _hidden.Contains(id) ? new GridLength(0) : new GridLength(Natural[id]);
+        _hidden.Contains(id) ? new GridLength(0) : new GridLength(Natural[id] * _zoom);
+
+    // ------------------------------------------------------------------ zoom
+    //
+    // Zoom lives here rather than as a render transform because WinUI has no LayoutTransform, and
+    // a RenderTransform scales pixels without telling layout — text goes blurry, columns stop
+    // matching the header, and hit-testing lands in the wrong place. Scaling the widths and font
+    // sizes that layout already reads keeps everything crisp and aligned by construction.
+
+    private const double MinZoom = 0.7;
+    private const double MaxZoom = 2.5;
+    private const double ZoomStep = 0.1;
+
+    private double _zoom = 1.0;
+
+    public double Zoom
+    {
+        get => _zoom;
+        set
+        {
+            var clamped = Math.Clamp(value, MinZoom, MaxZoom);
+            if (Math.Abs(clamped - _zoom) < 0.001) return;
+
+            _zoom = clamped;
+            RaiseAll();
+        }
+    }
+
+    /// <summary>Row height, so rows grow with the text rather than clipping it.</summary>
+    public double RowHeight => Math.Round(28 * _zoom);
+
+    public double CellFontSize => Math.Round(13 * _zoom, 1);
+    public double HeaderFontSize => Math.Round(12 * _zoom, 1);
+    public double GlyphFontSize => Math.Round(12 * _zoom, 1);
+
+    /// <summary>Percentage for the status bar, so the current zoom is discoverable.</summary>
+    public string ZoomLabel => $"{Math.Round(_zoom * 100)}%";
+
+    public void ZoomIn() => Zoom = _zoom + ZoomStep;
+    public void ZoomOut() => Zoom = _zoom - ZoomStep;
+    public void ZoomReset() => Zoom = 1.0;
+
+    public bool IsDefaultZoom => Math.Abs(_zoom - 1.0) < 0.001;
 
     // A zero-width column is not enough on its own: a TextBlock arranged into zero width still
     // paints its text, which bleeds over the neighbouring column. Cells bind their Visibility here
@@ -123,8 +167,29 @@ public sealed class ColumnLayout : INotifyPropertyChanged
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(id + "Vis"));
     }
 
+    /// <summary>
+    /// Re-raises every derived property. Used by zoom, which moves all of them at once — the
+    /// column widths, the font sizes and the row height have to change in the same frame or the
+    /// header and rows would be briefly measured against different scales.
+    /// </summary>
+    private void RaiseAll()
+    {
+        foreach (var id in Natural.Keys) Raise(id);
+
+        foreach (var name in new[]
+                 {
+                     nameof(TotalWidth), nameof(RowHeight), nameof(CellFontSize),
+                     nameof(HeaderFontSize), nameof(GlyphFontSize), nameof(Zoom),
+                     nameof(ZoomLabel), nameof(IsDefaultZoom),
+                 })
+        {
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+        }
+    }
+
     /// <summary>Sum of visible widths, so the header and rows can size the scroll extent together.</summary>
-    public double TotalWidth => Natural.Where(kv => !_hidden.Contains(kv.Key)).Sum(kv => kv.Value);
+    public double TotalWidth =>
+        Natural.Where(kv => !_hidden.Contains(kv.Key)).Sum(kv => kv.Value) * _zoom;
 
     public static IEnumerable<string> AllIds => Natural.Keys;
 

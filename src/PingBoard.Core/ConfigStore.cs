@@ -3,11 +3,18 @@ using System.Globalization;
 namespace PingBoard.Core;
 
 /// <summary>Everything loaded from one config file.</summary>
-public sealed record BoardConfig(Settings Settings, IReadOnlyList<TargetConfig> Targets, AlertSettings Alerts)
+public sealed record BoardConfig(
+    Settings Settings,
+    IReadOnlyList<TargetConfig> Targets,
+    AlertSettings Alerts,
+    IReadOnlyList<TabConfig> Tabs)
 {
     /// <summary>Convenience for callers that predate alerting and have no alert settings to supply.</summary>
     public BoardConfig(Settings settings, IReadOnlyList<TargetConfig> targets)
-        : this(settings, targets, new AlertSettings()) { }
+        : this(settings, targets, new AlertSettings(), []) { }
+
+    public BoardConfig(Settings settings, IReadOnlyList<TargetConfig> targets, AlertSettings alerts)
+        : this(settings, targets, alerts, []) { }
 }
 
 /// <summary>
@@ -23,6 +30,7 @@ public static class ConfigStore
     public const string SettingsSection = "Settings";
     public const string AlertsSection = "Alerts";
     public const string TargetPrefix = "Target:";
+    public const string TabPrefix = "Tab:";
 
     private const string HeaderComment =
         "PingBoard configuration.\n" +
@@ -56,6 +64,9 @@ public static class ConfigStore
             settings.LogPath = s.GetString(nameof(Settings.LogPath), settings.LogPath);
             settings.LogEnabled = s.GetBool(nameof(Settings.LogEnabled), settings.LogEnabled);
             settings.ResumeSettleMs = s.GetInt(nameof(Settings.ResumeSettleMs), settings.ResumeSettleMs);
+            settings.TraceOnFailure = s.GetBool(nameof(Settings.TraceOnFailure), settings.TraceOnFailure);
+            settings.TraceMaxHops = s.GetInt(nameof(Settings.TraceMaxHops), settings.TraceMaxHops);
+            settings.TraceHopTimeoutMs = s.GetInt(nameof(Settings.TraceHopTimeoutMs), settings.TraceHopTimeoutMs);
         }
 
         // The file may have been hand-edited into nonsense; clamp before anything uses it.
@@ -83,6 +94,25 @@ public static class ConfigStore
 
         alerts.Validate();
 
+        // Tabs are read before targets so a target naming a tab that has its own section picks up
+        // that section's state rather than a default invented here.
+        var tabs = new List<TabConfig>();
+        var tabsSeen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var order = 0;
+
+        foreach (var section in ini.WithPrefix(TabPrefix))
+        {
+            var name = TabConfig.Normalise(section.Name[TabPrefix.Length..]);
+            if (!tabsSeen.Add(name)) continue;
+
+            tabs.Add(new TabConfig
+            {
+                Name = name,
+                Enabled = section.GetBool(nameof(TabConfig.Enabled), true),
+                Order = section.GetInt(nameof(TabConfig.Order), order++),
+            });
+        }
+
         var targets = new List<TargetConfig>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -109,6 +139,7 @@ public static class ConfigStore
                 Probe = kind,
                 Port = Math.Clamp(section.GetInt(nameof(TargetConfig.Port), 443), 1, 65535),
                 Enabled = section.GetBool(nameof(TargetConfig.Enabled), true),
+                Tab = section.GetString(nameof(TargetConfig.Tab), "").Trim(),
 
                 // Every override is clamped to the same range Settings.Validate applies globally.
                 // An override that skipped validation would be the one value in the file that
@@ -127,7 +158,56 @@ public static class ConfigStore
             });
         }
 
-        return new BoardConfig(settings, targets, alerts);
+        // Any tab a target names but that has no section of its own still has to exist, or those
+        // targets would have nowhere to appear. Same for the default group.
+        foreach (var target in targets)
+        {
+            var name = TabConfig.Normalise(target.Tab);
+            if (tabsSeen.Add(name)) tabs.Add(new TabConfig { Name = name, Order = order++ });
+        }
+
+        tabs.Sort((a, b) => a.Order.CompareTo(b.Order));
+
+        return new BoardConfig(settings, targets, alerts, tabs);
+    }
+
+    /// <summary>
+    /// Writes the <c>[Tab:...]</c> sections, or copies the existing ones across when the caller
+    /// passed none.
+    /// <para>
+    /// Only tabs that carry non-default state are written. A tab that is merely a name with every
+    /// target pointing at it needs no section — it is reconstructed on load from the memberships —
+    /// so grouping a board does not litter the file with empty stanzas.
+    /// </para>
+    /// </summary>
+    private static void WriteTabs(IniFile ini, string path, IEnumerable<TabConfig>? tabs)
+    {
+        if (tabs is null)
+        {
+            if (!File.Exists(path) && !File.Exists(path + ".bak")) return;
+
+            foreach (var existing in IniFile.LoadResilient(path).WithPrefix(TabPrefix))
+            {
+                var copy = ini.GetOrAdd(existing.Name);
+                foreach (var (key, value) in existing.Entries) copy.Set(key, value);
+            }
+
+            return;
+        }
+
+        // Every tab gets a section, including ones in an otherwise default state.
+        //
+        // An earlier version skipped those to keep the file tidy, and that lost the tab order: a
+        // tab with no section is reconstructed on load from whichever targets happen to name it,
+        // so the strip came back in target order — alphabetical — rather than the user's. Order is
+        // state the user chose, not a default worth inferring.
+        var order = 0;
+        foreach (var tab in tabs)
+        {
+            var section = ini.GetOrAdd(TabPrefix + tab.Name);
+            section.Set(nameof(TabConfig.Enabled), tab.Enabled);
+            section.Set(nameof(TabConfig.Order), order++);
+        }
     }
 
     /// <summary>Clamps an optional override, preserving "inherit from [Settings]" as null.</summary>
@@ -182,11 +262,17 @@ public static class ConfigStore
     /// edited, and those paths have no alert settings in hand — without this, the first autosave
     /// after startup would quietly delete the user's webhook and SMTP credentials.
     /// </param>
+    /// <param name="tabs">
+    /// Null leaves any <c>[Tab:...]</c> sections on disk alone, for the same reason
+    /// <paramref name="alerts"/> does: autosave paths that know nothing about tabs must not delete
+    /// the user's grouping.
+    /// </param>
     public static void Save(
         string path,
         Settings settings,
         IEnumerable<TargetConfig> targets,
-        AlertSettings? alerts = null)
+        AlertSettings? alerts = null,
+        IEnumerable<TabConfig>? tabs = null)
     {
         var ini = new IniFile();
 
@@ -206,8 +292,12 @@ public static class ConfigStore
         s.Set(nameof(Settings.LogEnabled), settings.LogEnabled);
         s.Set(nameof(Settings.LogPath), settings.LogPath);
         s.Set(nameof(Settings.ResumeSettleMs), settings.ResumeSettleMs);
+        s.Set(nameof(Settings.TraceOnFailure), settings.TraceOnFailure);
+        s.Set(nameof(Settings.TraceMaxHops), settings.TraceMaxHops);
+        s.Set(nameof(Settings.TraceHopTimeoutMs), settings.TraceHopTimeoutMs);
 
         WriteAlerts(ini, path, alerts);
+        WriteTabs(ini, path, tabs);
 
         foreach (var t in targets)
         {
@@ -216,6 +306,10 @@ public static class ConfigStore
             section.Set(nameof(TargetConfig.Probe), t.Probe == ProbeKind.Tcp ? "tcp" : "icmp");
             if (t.Probe == ProbeKind.Tcp) section.Set(nameof(TargetConfig.Port), t.Port);
             if (!t.Enabled) section.Set(nameof(TargetConfig.Enabled), false);
+
+            // Written only when the target actually names a tab, so a board that never used them
+            // round-trips byte for byte.
+            if (t.Tab is { Length: > 0 }) section.Set(nameof(TargetConfig.Tab), t.Tab);
 
             section.SetOptional(nameof(TargetConfig.IntervalMs), t.IntervalMs);
             section.SetOptional(nameof(TargetConfig.TimeoutMs), t.TimeoutMs);

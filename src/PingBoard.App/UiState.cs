@@ -22,6 +22,16 @@ public sealed class UiState
     public string? LastConfigPath { get; set; }
 
     /// <summary>
+    /// Notification mute, as an ISO-8601 instant or the literal "indefinite"; empty when not muted.
+    /// Persisted so an indefinite mute is not quietly lifted by a restart — see
+    /// <see cref="NotificationMute"/> for why this one deadline uses the wall clock.
+    /// </summary>
+    public string MuteUntil { get; set; } = "";
+
+    /// <summary>Board zoom, as a percentage. Per-machine, like everything else in this file.</summary>
+    public int ZoomPercent { get; set; } = 100;
+
+    /// <summary>
     /// "System", "Light", "Dark" or "Matrix". System follows the Windows setting live; Matrix is
     /// the green-phosphor terminal palette layered over Dark.
     /// </summary>
@@ -46,6 +56,8 @@ public sealed class UiState
             state.WindowHeight = section.GetInt(nameof(WindowHeight), 0);
             state.HiddenColumns = section.GetString(nameof(HiddenColumns), state.HiddenColumns);
             state.Theme = section.GetString(nameof(Theme), state.Theme);
+            state.MuteUntil = section.GetString(nameof(MuteUntil), "");
+            state.ZoomPercent = Math.Clamp(section.GetInt(nameof(ZoomPercent), 100), 70, 250);
 
             var last = section.GetString(nameof(LastConfigPath), "");
             state.LastConfigPath = last.Length > 0 ? last : null;
@@ -72,6 +84,8 @@ public sealed class UiState
             section.Set(nameof(WindowHeight), WindowHeight);
             section.Set(nameof(HiddenColumns), HiddenColumns);
             section.Set(nameof(Theme), Theme);
+            if (MuteUntil.Length > 0) section.Set(nameof(MuteUntil), MuteUntil);
+            if (ZoomPercent != 100) section.Set(nameof(ZoomPercent), ZoomPercent);
             if (LastConfigPath is { Length: > 0 } path) section.Set(nameof(LastConfigPath), path);
 
             ini.SaveAtomic(AppPaths.UiStateFile);

@@ -7,17 +7,59 @@
     xmlns:vm="using:PingBoard.App.ViewModels"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-    mc:Ignorable="d">
+    mc:Ignorable="d"
+    FontSize="{x:Bind vm:ColumnLayout.Instance.HeaderFontSize, Mode=OneWay}">
 
     <Grid>
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="*" />
-            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />   <!-- title bar -->
+            <RowDefinition Height="Auto" />   <!-- commands -->
+            <RowDefinition Height="Auto" />   <!-- tab strip -->
+            <RowDefinition Height="Auto" />   <!-- suspend banner -->
+            <RowDefinition Height="Auto" />   <!-- column headers -->
+            <RowDefinition Height="*" />      <!-- board -->
+            <RowDefinition Height="Auto" />   <!-- status bar -->
         </Grid.RowDefinitions>
+
+        <!-- Tab strip. Hidden entirely while there is only one group, so a board that does not use
+             tabs looks exactly as it did before they existed. Each tab shows a live tally rather
+             than a bare name: the whole point of grouping is that you are not looking at most of
+             your hosts, and a tab that cannot say "2 down" would hide outages behind itself. -->
+        <ItemsControl Grid.Row="2"
+                      ItemsSource="{x:Bind Vm.Tabs, Mode=OneWay}"
+                      Visibility="{x:Bind Vm.TabStripVisibility, Mode=OneWay}"
+                      Padding="10,0,10,6">
+            <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                    <StackPanel Orientation="Horizontal" Spacing="4" />
+                </ItemsPanelTemplate>
+            </ItemsControl.ItemsPanel>
+            <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="vm:TabItem">
+                    <Button Click="OnSelectTab"
+                            Background="Transparent"
+                            Padding="10,4"
+                            Opacity="{x:Bind TabOpacity, Mode=OneWay}"
+                            AutomationProperties.Name="{x:Bind Name}">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <TextBlock Text="&#xE711;"
+                                       FontFamily="Segoe Fluent Icons" FontSize="10"
+                                       VerticalAlignment="Center"
+                                       Visibility="{x:Bind DisabledMarkVisibility, Mode=OneWay}" />
+                            <TextBlock Text="{x:Bind Label, Mode=OneWay}"
+                                       FontSize="12"
+                                       Opacity="{x:Bind SelectionOpacity, Mode=OneWay}" />
+                        </StackPanel>
+                        <Button.ContextFlyout>
+                            <MenuFlyout>
+                                <MenuFlyoutItem Text="Enable this tab" Click="OnEnableTab" />
+                                <MenuFlyoutItem Text="Disable this tab" Click="OnDisableTab" />
+                            </MenuFlyout>
+                        </Button.ContextFlyout>
+                    </Button>
+                </DataTemplate>
+            </ItemsControl.ItemTemplate>
+        </ItemsControl>
 
         <!-- Content is extended into the title bar, so the draggable region must be nominated
              explicitly (MainWindow calls SetTitleBar on this) or the window cannot be moved. -->
@@ -73,6 +115,46 @@
                 </Button.Flyout>
             </Button>
 
+            <!-- Mute. The glyph reflects live state rather than the last click, so an expired
+                 timed mute shows as un-muted without anyone having to touch it. -->
+            <Button x:Name="MuteButton"
+                    ToolTipService.ToolTip="{x:Bind Vm.MuteTooltip, Mode=OneWay}"
+                    AutomationProperties.Name="Mute desktop notifications">
+                <TextBlock Text="{x:Bind Vm.MuteGlyph, Mode=OneWay}"
+                           FontFamily="Segoe Fluent Icons" FontSize="13" />
+                <Button.Flyout>
+                    <MenuFlyout Placement="Bottom">
+                        <MenuFlyoutItem Text="Mute for 1 hour"    Click="OnMuteHour" />
+                        <MenuFlyoutItem Text="Mute for 12 hours"  Click="OnMuteTwelveHours" />
+                        <MenuFlyoutItem Text="Mute indefinitely"  Click="OnMuteIndefinitely" />
+                        <MenuFlyoutSeparator />
+                        <MenuFlyoutItem x:Name="UnmuteItem" Text="Unmute" Click="OnUnmute" />
+                    </MenuFlyout>
+                </Button.Flyout>
+            </Button>
+
+            <!-- Filter. Note what it does not do: filtered-out targets keep being probed and keep
+                 alerting. A search box that quietly stopped monitoring would be a trap. -->
+            <AutoSuggestBox PlaceholderText="Filter name, IP or hostname"
+                            Text="{x:Bind Vm.FilterText, Mode=TwoWay}"
+                            QueryIcon="Find"
+                            Width="220"
+                            VerticalAlignment="Center"
+                            AutomationProperties.Name="Filter targets" />
+
+            <ComboBox SelectedIndex="{x:Bind Vm.StatusFilterIndex, Mode=TwoWay}"
+                      VerticalAlignment="Center"
+                      MinWidth="118"
+                      ToolTipService.ToolTip="Filter by status"
+                      AutomationProperties.Name="Filter by status">
+                <ComboBoxItem Content="All statuses" />
+                <ComboBoxItem Content="Problems" />
+                <ComboBoxItem Content="OK" />
+                <ComboBoxItem Content="Idle" />
+            </ComboBox>
+
+            <AppBarSeparator />
+
             <Button ToolTipService.ToolTip="File, statistics and settings"
                     AutomationProperties.Name="File, statistics and settings">
                 <TextBlock Text="&#xE712;" FontFamily="Segoe Fluent Icons" FontSize="13" />
@@ -117,7 +199,7 @@
 
         <!-- Explains why counters have stopped moving, which is otherwise indistinguishable from
              the app having hung. -->
-        <InfoBar Grid.Row="2"
+        <InfoBar Grid.Row="3"
                  Margin="10,0,10,8"
                  IsOpen="{x:Bind Vm.BannerVisible, Mode=OneWay}"
                  Message="{x:Bind Vm.BannerText, Mode=OneWay}"
@@ -127,7 +209,7 @@
 
         <!-- Column headers. Widths bind to the same shared object the rows use, which is what
              makes header/row misalignment structurally impossible. -->
-        <Border Grid.Row="3"
+        <Border Grid.Row="4"
                 x:Name="HeaderBar"
                 Background="{ThemeResource HeaderBackgroundBrush}"
                 BorderThickness="0,0,0,1"
@@ -176,9 +258,11 @@
         <!-- The board. A virtualized ListView with a hand-built header rather than a third-party
              grid: WinUI 3 ships no DataGrid, and this is comfortable at the row counts a ping
              monitor actually has. -->
-        <ListView Grid.Row="4"
+        <ListView Grid.Row="5"
                   x:Name="BoardList"
-                  ItemsSource="{x:Bind Vm.Rows, Mode=OneWay}"
+                  ItemsSource="{x:Bind Vm.VisibleRows, Mode=OneWay}"
+                  FontSize="{x:Bind vm:ColumnLayout.Instance.CellFontSize, Mode=OneWay}"
+                  PointerWheelChanged="OnBoardPointerWheel"
                   SelectionMode="Extended"
                   Padding="0,2,0,8"
                   ScrollViewer.HorizontalScrollMode="Auto"
@@ -195,8 +279,18 @@
 
             <ListView.ItemTemplate>
                 <DataTemplate x:DataType="vm:TargetRow">
-                    <Grid Height="28"
-                          Opacity="{x:Bind RowOpacity, Mode=OneWay}"
+                  <StackPanel Opacity="{x:Bind RowOpacity, Mode=OneWay}">
+                    <!-- Attached to the row rather than to the ListView, so the command acts on the
+                         row that was right-clicked instead of on whatever happens to be selected. -->
+                    <StackPanel.ContextFlyout>
+                        <MenuFlyout>
+                            <MenuFlyoutItem Text="Trace path now" Click="OnTraceNow">
+                                <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE71B;" /></MenuFlyoutItem.Icon>
+                            </MenuFlyoutItem>
+                        </MenuFlyout>
+                    </StackPanel.ContextFlyout>
+
+                    <Grid Height="{x:Bind vm:ColumnLayout.Instance.RowHeight, Mode=OneWay}"
                           ToolTipService.ToolTip="{x:Bind StatusTooltip, Mode=OneWay}">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="{x:Bind vm:ColumnLayout.Instance.Status, Mode=OneWay}" />
@@ -219,6 +313,18 @@
                         <!-- Glyph AND text AND colour. Never colour alone. -->
                         <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="7" VerticalAlignment="Center"
                                     Visibility="{x:Bind vm:ColumnLayout.Instance.StatusVis, Mode=OneWay}">
+                            <!-- Expands the detail panel: the latency graph, and the path trace
+                                 when there is one. Always present, because every row has latency
+                                 history worth plotting even when nothing has failed. -->
+                            <Button Click="OnToggleDetail"
+                                    Background="Transparent" BorderThickness="0"
+                                    Padding="2,0" MinWidth="0" MinHeight="0"
+                                    VerticalAlignment="Center"
+                                    ToolTipService.ToolTip="Show latency graph and path trace"
+                                    AutomationProperties.Name="Show latency graph and path trace">
+                                <TextBlock Text="{x:Bind DetailGlyph, Mode=OneWay}"
+                                           FontFamily="Segoe Fluent Icons" FontSize="10" />
+                            </Button>
                             <TextBlock Text="{x:Bind StatusGlyph, Mode=OneWay}"
                                        FontFamily="Segoe Fluent Icons"
                                        FontSize="12"
@@ -252,11 +358,41 @@
                         <TextBlock Grid.Column="12" Text="{x:Bind Uptime, Mode=OneWay}"     Style="{StaticResource NumericCellStyle}" Visibility="{x:Bind vm:ColumnLayout.Instance.UptimeVis, Mode=OneWay}"     Margin="0,0,10,0" Opacity="0.85" />
                         <TextBlock Grid.Column="13" Text="{x:Bind Probe, Mode=OneWay}"      Style="{StaticResource CellTextStyle}"    Visibility="{x:Bind vm:ColumnLayout.Instance.ProbeVis, Mode=OneWay}"      Opacity="0.7" />
                     </Grid>
+
+                    <!-- Detail panel, nested under the host it belongs to: the latency graph, and
+                         the path trace when one has been captured. Indented and monospaced so the
+                         trace reads as traceroute output rather than as more board rows. -->
+                    <StackPanel Visibility="{x:Bind DetailVisibility, Mode=OneWay}"
+                                Margin="30,4,14,12" Spacing="2">
+
+                        <controls:LatencyGraph Row="{x:Bind}"
+                                               Version="{x:Bind HistoryVersion, Mode=OneWay}"
+                                               Height="110"
+                                               Margin="0,0,0,8" />
+
+                        <StackPanel Visibility="{x:Bind TraceSectionVisibility, Mode=OneWay}" Spacing="2">
+                            <TextBlock Text="{x:Bind TraceCaption, Mode=OneWay}"
+                                       FontSize="11" Opacity="0.55" />
+                            <TextBlock Text="{x:Bind TraceSummary, Mode=OneWay}"
+                                       FontSize="12" Opacity="0.9" FontWeight="SemiBold"
+                                       TextWrapping="Wrap" />
+                            <ItemsControl ItemsSource="{x:Bind TraceHops}" Margin="0,2,0,0">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="x:String">
+                                        <TextBlock Text="{x:Bind}"
+                                                   FontFamily="{StaticResource NumericFont}"
+                                                   FontSize="12" Opacity="0.75" />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </StackPanel>
+                  </StackPanel>
                 </DataTemplate>
             </ListView.ItemTemplate>
         </ListView>
 
-        <Border Grid.Row="5"
+        <Border Grid.Row="6"
                 x:Name="StatusBar"
                 BorderThickness="0,1,0,0"
                 BorderBrush="{ThemeResource RowSeparatorBrush}"

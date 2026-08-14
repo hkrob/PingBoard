@@ -15,6 +15,12 @@ public sealed class TargetConfig
     public int Port { get; set; } = 443;
     public bool Enabled { get; set; } = true;
 
+    /// <summary>
+    /// Tab this target belongs to. Empty means the default group, and is written out as nothing at
+    /// all, so a config that never used tabs stays exactly as it was.
+    /// </summary>
+    public string Tab { get; set; } = "";
+
     // Null means "inherit from [Settings]".
     public int? IntervalMs { get; set; }
     public int? TimeoutMs { get; set; }
@@ -106,6 +112,9 @@ public sealed class PingTarget : IDisposable
     private IPAddress? _resolved;
     private string? _reverseName;
 
+    /// <summary>Most recent path trace, captured when this target was last declared down.</summary>
+    private TraceResult? _lastTrace;
+
     public PingTarget(TargetConfig config, Settings settings, TargetCounters? counters = null)
     {
         Config = config;
@@ -120,6 +129,17 @@ public sealed class PingTarget : IDisposable
 
     /// <summary>Phase offset within the interval, so targets don't all fire on the same tick.</summary>
     public long NextDueTick { get; set; }
+
+    /// <summary>
+    /// False when this target's tab has been disabled. Kept separate from
+    /// <see cref="TargetConfig.Enabled"/> rather than folded into it: they are different
+    /// statements — "I paused this host" versus "I switched off this whole group" — and merging
+    /// them would mean re-enabling a tab silently un-pausing hosts the user had paused by hand.
+    /// </summary>
+    public bool TabEnabled { get; set; } = true;
+
+    /// <summary>Probed only when both the target and its tab are enabled.</summary>
+    public bool IsActive => Config.Enabled && TabEnabled;
 
     public bool IsInFlight => Volatile.Read(ref _inFlight) == 1;
 
@@ -299,6 +319,20 @@ public sealed class PingTarget : IDisposable
     }
 
     public ProbeResult[] RecentHistory(int n) => _history.Recent(n);
+
+    /// <summary>
+    /// The trace taken at the last failure, or null if there has not been one. Kept on the target
+    /// rather than only logged, so the UI can show where the path broke while it is still broken.
+    /// </summary>
+    public TraceResult? LastTrace
+    {
+        get { lock (_gate) return _lastTrace; }
+    }
+
+    public void SetLastTrace(TraceResult trace)
+    {
+        lock (_gate) _lastTrace = trace;
+    }
 
     public TargetSnapshot Snapshot()
     {

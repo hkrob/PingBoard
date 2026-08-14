@@ -56,6 +56,91 @@ public sealed partial class TargetRow : ObservableObject
     public void RefreshStatusBrush() => OnPropertyChanged(nameof(ThemeKey));
     [ObservableProperty] public partial double RowOpacity { get; private set; } = 1.0;
 
+    // ------------------------------------------------------------------ failure trace
+    //
+    // The trace renders as rows nested under its host rather than in a separate pane, because the
+    // question it answers — "where did the path break" — only means anything next to the row that
+    // went red. A ListView cannot nest rows, so the hops live inside the item template and the
+    // container simply grows: virtualization, selection, export and column alignment all carry on
+    // working, which a TreeView would have cost us for a purely visual gain.
+
+    /// <summary>Chevron, shown only on rows that actually have a trace to expand.</summary>
+    [ObservableProperty] public partial Visibility TraceSectionVisibility { get; private set; } = Visibility.Collapsed;
+
+    /// <summary>The nested hop rows.</summary>
+    [ObservableProperty] public partial Visibility DetailVisibility { get; private set; } = Visibility.Collapsed;
+
+    [ObservableProperty] public partial string DetailGlyph { get; private set; } = ((char)0xE76C).ToString();
+    [ObservableProperty] public partial string TraceSummary { get; private set; } = "";
+    [ObservableProperty] public partial string TraceCaption { get; private set; } = "";
+
+    public System.Collections.ObjectModel.ObservableCollection<string> TraceHops { get; } = [];
+    private static readonly string ChevronRight = ((char)0xE76C).ToString();
+    private static readonly string ChevronDown = ((char)0xE70D).ToString();
+
+    /// <summary>Timestamp of the trace currently rendered, so a 4 Hz refresh does not rebuild it.</summary>
+    private DateTimeOffset? _traceStamp;
+
+    /// <summary>
+    /// Opens the nested area and shows progress before the trace starts. A trace walks up to
+    /// thirty hops at a second each, so without this the row would sit unchanged for several
+    /// seconds after the click and read as a menu item that did nothing.
+    /// </summary>
+    public void BeginTrace()
+    {
+        TraceSectionVisibility = Visibility.Visible;
+        DetailVisibility = Visibility.Visible;
+        DetailGlyph = ChevronDown;
+        TraceCaption = "Tracing�";
+        TraceSummary = "";
+        TraceHops.Clear();
+
+        // Clears the guard so the completed result is rendered even if it carries the same
+        // timestamp semantics as the one already shown.
+        _traceStamp = null;
+    }
+
+    /// <summary>Reports that a requested trace could not run at all.</summary>
+    public void TraceUnavailable(string reason)
+    {
+        TraceCaption = "";
+        TraceSummary = reason;
+        TraceHops.Clear();
+    }
+
+    public void ToggleDetail()
+    {
+        var expanded = DetailVisibility == Visibility.Visible;
+        DetailVisibility = expanded ? Visibility.Collapsed : Visibility.Visible;
+        DetailGlyph = expanded ? ChevronRight : ChevronDown;
+    }
+
+    /// <summary>
+    /// Pulls in the latest trace. Rebuilding the hop list on every tick would churn an
+    /// ObservableCollection forty times a second for data that changes only on a failure, so the
+    /// trace timestamp gates the work.
+    /// </summary>
+    private void RefreshTrace()
+    {
+        if (Target.LastTrace is not { } trace)
+        {
+            TraceSectionVisibility = Visibility.Collapsed;
+            return;
+        }
+
+        TraceSectionVisibility = Visibility.Visible;
+
+        if (_traceStamp == trace.When) return;
+        _traceStamp = trace.When;
+
+        TraceSummary = trace.Summary();
+        TraceCaption = "Path at " + trace.When.ToString("HH:mm:ss", CultureInfo.CurrentCulture)
+                                  + " → " + trace.Destination;
+
+        TraceHops.Clear();
+        foreach (var hop in trace.Hops) TraceHops.Add(hop.ToString());
+    }
+
     /// <summary>Bumped whenever history changes, so the sparkline knows to redraw.</summary>
     [ObservableProperty] public partial int HistoryVersion { get; private set; }
 
@@ -72,6 +157,7 @@ public sealed partial class TargetRow : ObservableObject
         StatusLabel = s.Status.Label();
         StatusGlyph = s.Status.Glyph();
         ThemeKey = BrushKeyFor(s.Status);
+        RefreshTrace();
 
         // Paused and suspended rows are dimmed so the eye skips them, but they keep their glyph
         // and label — dimming is reinforcement, never the only signal.

@@ -35,6 +35,8 @@ internal static class SelfTest
             AlertSecretsAndValidation();
             AlertConfigSurvivesAutosave(scratch);
             WebhookDeliversATransition();
+            TraceRouteFindsThePath();
+            TabsGroupWithoutGating(scratch);
         }
         finally
         {
@@ -614,6 +616,24 @@ internal static class SelfTest
         Check("alerts: undecryptable blob yields empty, not garbage",
             ProtectedValue.Unprotect("dpapi:bm90LWEtcmVhbC1ibG9i").Length == 0);
 
+        // A DNS failure never resolved to anything, so the address is legitimately empty. The
+        // summary must read as a fact about the network rather than as a bug in the alert.
+        var unresolved = new AlertPayload("bad-name", "", "down", "DNS FAIL",
+            DateTimeOffset.Now, 0, 3, "host");
+
+        Check("alerts: no empty parens when the address is unknown",
+            !unresolved.Summary().Contains("()", StringComparison.Ordinal));
+        Check("alerts: unresolved target still names itself",
+            unresolved.Summary().Contains("bad-name is DOWN", StringComparison.Ordinal));
+        Check("alerts: body marks the address unresolved",
+            unresolved.Body().Contains("(unresolved)", StringComparison.Ordinal));
+
+        var resolved = new AlertPayload("gw", "10.1.10.1", "down", "TIMEOUT",
+            DateTimeOffset.Now, 0, 3, "host");
+
+        Check("alerts: a known address is still shown in parentheses",
+            resolved.Summary().Contains("gw (10.1.10.1)", StringComparison.Ordinal));
+
         var badUrl = new AlertSettings { WebhookEnabled = true, WebhookUrl = "definitely not a url" };
         badUrl.Validate();
         Check("alerts: unusable webhook url disables the sink", !badUrl.WebhookEnabled);
@@ -671,6 +691,163 @@ internal static class SelfTest
             after.Alerts.WebhookUrl == "https://hooks.example.com/abc");
         Check("alerts: an autosave preserves the credential too",
             ProtectedValue.Unprotect(after.Alerts.SmtpPassword) == "s3cret-password");
+    }
+
+    /// <summary>
+    /// The failure trace, against real addresses on loopback and in TEST-NET-1.
+    /// <para>
+    /// The subtlety worth pinning is that <c>TtlExpired</c> is the <em>success</em> case for an
+    /// intermediate hop — a router saying it decremented the TTL to zero is exactly what a trace
+    /// asks for. Treating it as a failure is the classic way to get this wrong, and it produces a
+    /// trace that is all asterisks on a perfectly healthy path.
+    /// </para>
+    /// </summary>
+    private static void TraceRouteFindsThePath()
+    {
+        var options = new TraceOptions(MaxHops: 5, HopTimeoutMs: 1000, StopAfterSilentHops: 2);
+
+        var loopback = TraceRoute
+            .RunAsync("loopback", System.Net.IPAddress.Loopback, options, CancellationToken.None)
+            .GetAwaiter().GetResult();
+
+        Check("trace: loopback is reached", loopback.Reached);
+        Check("trace: loopback is one hop", loopback.Hops.Count == 1);
+        Check("trace: the hop answered", loopback.Hops[0].Answered);
+        Check("trace: summary says the path is intact",
+            loopback.Summary().Contains("path intact", StringComparison.Ordinal));
+
+        // TEST-NET-1 is reserved and unroutable, so this must never report success. How far it
+        // gets depends on the network the test runs on, which is why only "not reached" is asserted.
+        var dead = TraceRoute
+            .RunAsync("blackhole", System.Net.IPAddress.Parse("192.0.2.1"), options, CancellationToken.None)
+            .GetAwaiter().GetResult();
+
+        Check("trace: an unroutable address is not reported as reached", !dead.Reached);
+        Check("trace: bounded by MaxHops", dead.Hops.Count <= 5);
+        Check("trace: summary describes a break, not an intact path",
+            !dead.Summary().Contains("path intact", StringComparison.Ordinal));
+
+        // Silence must render as the traditional asterisk rather than an empty line.
+        var silent = new TraceHop(7, null, ProbeResult.NoRtt, System.Net.NetworkInformation.IPStatus.TimedOut);
+        Check("trace: an unanswered hop renders as *", silent.ToString().EndsWith('*'));
+
+        var answered = new TraceHop(3, System.Net.IPAddress.Parse("10.1.10.1"), 4,
+            System.Net.NetworkInformation.IPStatus.TtlExpired);
+        Check("trace: an answered hop shows address and rtt",
+            answered.ToString().Contains("10.1.10.1", StringComparison.Ordinal)
+            && answered.ToString().Contains("4 ms", StringComparison.Ordinal));
+
+        Check("trace: settings clamp hop count", ClampedHops() is >= 1 and <= 64);
+
+        static int ClampedHops()
+        {
+            var s = new Settings { TraceMaxHops = 9999 };
+            s.Validate();
+            return s.TraceMaxHops;
+        }
+    }
+
+    /// <summary>
+    /// Tab grouping: config round-trip, backward compatibility, and the rule that matters — a tab
+    /// is a view, not a scheduler.
+    /// </summary>
+    private static void TabsGroupWithoutGating(string dir)
+    {
+        var path = Path.Combine(dir, "tabs.ini");
+
+        var targets = new List<TargetConfig>
+        {
+            new() { Name = "gw", Address = "10.1.10.1", Tab = "LAN" },
+            new() { Name = "wan", Address = "1.1.1.1", Tab = "WAN" },
+            new() { Name = "stray", Address = "8.8.8.8" },     // no tab at all
+        };
+
+        var tabs = new List<TabConfig>
+        {
+            new() { Name = "LAN", Enabled = true, Order = 0 },
+            new() { Name = "WAN", Enabled = false, Order = 1 },
+        };
+
+        ConfigStore.Save(path, new Settings(), targets, null, tabs);
+        var loaded = ConfigStore.Load(path);
+
+        Check("tabs: membership round-trips",
+            loaded.Targets.First(t => t.Name == "gw").Tab == "LAN");
+        Check("tabs: a disabled tab round-trips",
+            loaded.Tabs.First(t => t.Name == "WAN").Enabled == false);
+        Check("tabs: an untabbed target lands in the default group",
+            loaded.Tabs.Any(t => t.Name == TabConfig.DefaultName));
+        Check("tabs: no Tab key is written for an untabbed target",
+            loaded.Targets.First(t => t.Name == "stray").Tab.Length == 0);
+
+        // A tab named only by its members still has to exist, or those targets have nowhere to go.
+        var implied = Path.Combine(dir, "implied.ini");
+        ConfigStore.Save(implied, new Settings(),
+            [new TargetConfig { Name = "a", Address = "1.1.1.1", Tab = "Servers" }]);
+
+        Check("tabs: a tab with no section is reconstructed from membership",
+            ConfigStore.Load(implied).Tabs.Any(t => t.Name == "Servers"));
+
+        // Autosave paths pass no tabs; they must not delete the user's grouping.
+        ConfigStore.Save(path, new Settings(), targets);
+        Check("tabs: an autosave without tabs preserves them",
+            ConfigStore.Load(path).Tabs.First(t => t.Name == "WAN").Enabled == false);
+
+        // Tab order is state the user chose, not a default worth inferring. An earlier version
+        // skipped writing sections for tabs that were merely enabled and in sequence, which meant
+        // they were reconstructed on load from target membership — alphabetical — and the strip
+        // came back in the wrong order.
+        var ordered = Path.Combine(dir, "ordered.ini");
+        var orderedTabs = new List<TabConfig>
+        {
+            new() { Name = "Zulu", Order = 0 },
+            new() { Name = "Alpha", Order = 1 },
+            new() { Name = "Mike", Order = 2 },
+        };
+
+        ConfigStore.Save(ordered, new Settings(),
+        [
+            new TargetConfig { Name = "a", Address = "1.1.1.1", Tab = "Alpha" },
+            new TargetConfig { Name = "m", Address = "2.2.2.2", Tab = "Mike" },
+            new TargetConfig { Name = "z", Address = "3.3.3.3", Tab = "Zulu" },
+        ], null, orderedTabs);
+
+        var reloadedTabs = ConfigStore.Load(ordered).Tabs;
+
+        Check("tabs: declared order survives a round trip",
+            reloadedTabs.Count == 3
+            && reloadedTabs[0].Name == "Zulu"
+            && reloadedTabs[1].Name == "Alpha"
+            && reloadedTabs[2].Name == "Mike");
+
+        // A board that never used tabs must round-trip without gaining a Tab key.
+        var legacy = Path.Combine(dir, "legacy.ini");
+        ConfigStore.Save(legacy, new Settings(), [new TargetConfig { Name = "old", Address = "1.2.3.4" }]);
+        Check("tabs: a tab-free config gains no Tab key",
+            !File.ReadAllText(legacy).Contains("Tab=", StringComparison.OrdinalIgnoreCase));
+
+        // The load-bearing rule: disabling a tab pauses its targets, and that is entirely separate
+        // from a target the user paused by hand.
+        var settings = new Settings();
+        var host = new PingTarget(new TargetConfig { Name = "gw", Address = "10.1.10.1", Tab = "WAN" }, settings);
+
+        Check("tabs: active while both the target and its tab are enabled", host.IsActive);
+
+        host.TabEnabled = false;
+        Check("tabs: disabling the tab deactivates the target", !host.IsActive);
+
+        host.TabEnabled = true;
+        Check("tabs: re-enabling the tab reactivates it", host.IsActive);
+
+        // Re-enabling a tab must not resurrect a host the user paused individually.
+        var paused = new TargetConfig { Name = "gw", Address = "10.1.10.1", Tab = "WAN", Enabled = false };
+        host.UpdateConfig(paused);
+        host.TabEnabled = false;
+        host.TabEnabled = true;
+
+        Check("tabs: re-enabling a tab does not un-pause a hand-paused host", !host.IsActive);
+
+        host.Dispose();
     }
 
     /// <summary>A port the OS has just confirmed is free, so the test does not collide with a real service.</summary>

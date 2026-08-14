@@ -56,7 +56,7 @@ structurally — it is a separate project — so the part that has to be correct
 stress-tested without XAML in the way.
 
 ```bash
-dotnet run --project src/PingBoard.Harness -- --selftest        # 99 assertions
+dotnet run --project src/PingBoard.Harness -- --selftest        # 125 assertions
 dotnet run --project src/PingBoard.Harness -- board.ini --seconds 300
 ```
 
@@ -93,6 +93,35 @@ IntervalMs=5000            ; any [Settings] key can be overridden per target
 Address=nas.local
 Enabled=false              ; paused
 ```
+
+### Tabs
+
+Targets can be grouped into tabs. Membership lives on the target; the section carries the tab's own
+state, so renaming a tab does not mean editing every member.
+
+```ini
+[Tab:LAN]
+Enabled=true
+Order=0
+
+[Tab:WAN]
+Enabled=false              ; every target in this tab stops being probed
+Order=1
+
+[Target:gateway]
+Address=10.1.10.1
+Tab=LAN
+```
+
+**A tab is a view, not a scheduler.** Targets are probed regardless of which tab is on screen — the
+tabs you are *not* watching are exactly where an outage goes unnoticed. `Enabled=false` is the
+separate, explicit way to stop probing a group, and it reuses `Paused`, which is already excluded
+from the rolling loss figures. Disabling a tab overnight therefore does not corrupt its statistics
+the way counting the silence would.
+
+Each tab shows a live tally (`WAN · 2 down`) so a problem cannot hide behind an unselected tab, and
+the strip is hidden entirely while there is only one group. A board that never used tabs
+round-trips unchanged.
 
 Counters live in a sidecar (`board.state.ini`), so the file you edit stays free of churning
 numbers. Deleting the sidecar resets all statistics; there is a menu item for the same thing.
@@ -170,6 +199,54 @@ black plate, monospaced throughout. Failure states stay chromatically distinct t
 collapsing into shades of green, because a board you cannot read at a glance has lost the one
 thing it is for.
 
+**Mute** silences desktop notifications for an hour, twelve hours, or until switched back on. It
+does *not* touch webhook or email alerting: those exist to reach you when you are away from this
+machine, and silencing them because someone quietened a popup would invert the intent. The mute
+survives a restart — an indefinite one that quietly lifted itself would be the worst kind of bug —
+and shows in the status bar throughout, because a monitor you forgot you silenced is more dangerous
+than one that never alerted.
+
+**Zoom** is Ctrl+scroll, or Ctrl+`+` / Ctrl+`-` / Ctrl+`0`. It scales the column widths, row height
+and font sizes that layout already reads rather than applying a render transform — WinUI has no
+`LayoutTransform`, and scaling pixels would blur the text and drift the header out of alignment with
+the rows.
+
+**Filtering** is a text box over name, IP and hostname plus a status filter. Filtered-out targets
+keep being probed and keep alerting; the status bar always says how many of the total you are
+seeing, because counts that silently describe a subset are how someone concludes all is well while
+looking at three of forty hosts.
+
+### Failure traces
+
+When a target crosses the down threshold, PingBoard traces the path and stores where it broke.
+Expanding a row shows the latency graph and, beneath it, the hops:
+
+```
+path breaks after hop 2 (38.34.167.2), 7 probed
+ 1  10.4.0.1  49 ms
+ 2  38.34.167.2  49 ms
+ 3  *
+```
+
+That is the difference between knowing something broke and knowing whose problem it is — and it has
+to be captured at the moment of failure, because by the time anyone reaches the machine the path has
+usually healed. Right-click a row to trace on demand. Traces also append to a sibling
+`<log>.traces.txt`; a dozen hop lines crammed into one CSV cell would ruin the thing the CSV is good
+at. `TraceOnFailure`, `TraceMaxHops` and `TraceHopTimeoutMs` are in `[Settings]`.
+
+Two guards worth knowing: only down transitions trace, so a permanently dead host costs one trace
+rather than one per second; and at most two run at once, skipped rather than queued, because when an
+uplink drops every target crosses the threshold within seconds of the others and forty simultaneous
+traces would flood a network already in trouble.
+
+### The latency graph
+
+Expanding a row also plots the rolling window: one bar per probe scaled to that target's own peak,
+failures as full-height blocks, with min/avg/max gridlines. The sparkline tells you the *shape* of a
+problem in 44 bars; the graph tells you *how much*, against what baseline. A link that normally sits
+at 8 ms and is now at 40 ms is not down and loses no packets — every other column reads healthy, and
+only a plot scaled to its own history shows it.
+
 ---
 
 ## Design notes
@@ -221,7 +298,16 @@ Three cost real time and are easy to hit again:
    `PingBoard.App.csproj` has an explicit copy target with an `Error` guard so this fails loudly at
    build time rather than silently at startup.
 
-3. **Toast registration fails under self-contained deployment.**
+3. **A custom `Panel` must not touch layout state from inside layout.** Adding children, calling
+   `Measure`, or setting `TextBlock.Text` from `ArrangeOverride` invalidates layout from within
+   layout. WinUI responds with `LayoutCycleException` and *abandons the pass*, which freezes the
+   entire window and kills hit-testing — while the process still reports `Responding = true` and
+   sits at idle CPU. There is no spinning to give it away, and if `UnhandledException` marks it
+   handled the app limps on looking merely broken. `LatencyGraph` therefore creates its shapes and
+   computes all its text in a property-changed callback, and `ArrangeOverride` only assigns brushes
+   and calls `Arrange`. Cost: two wrong diagnoses before reading the crash log properly.
+
+4. **Toast registration fails under self-contained deployment.**
    `AppNotificationManager.Register()` needs `Microsoft.WindowsAppRuntime.Insights.Resource.dll`,
    which ships with the installed framework runtime and is not in the self-contained payload or any
    NuGet package. Rather than give up portability, notifications fall back to a tray balloon —

@@ -6,6 +6,14 @@
     <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
     <RootNamespace>PingBoard.App</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+
+    <!--
+      Embeds the icon into the executable itself. AppWindow.SetIcon only dresses the window; the
+      taskbar, Explorer and any shortcut the installer creates all read the exe's icon *resource*,
+      and without this they get the generic .NET apphost icon. Only visible once the app is
+      installed and pinned, which is exactly where it looks worst.
+    -->
+    <ApplicationIcon>Assets\pingboard.ico</ApplicationIcon>
     <Platforms>x64</Platforms>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
 
