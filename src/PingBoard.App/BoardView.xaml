@@ -353,30 +353,31 @@
                                     ToolTipService.ToolTip="Show latency graph and path trace"
                                     AutomationProperties.Name="Show latency graph and path trace">
                                 <TextBlock Text="{x:Bind DetailGlyph, Mode=OneWay}"
-                                           FontFamily="Segoe Fluent Icons" FontSize="10" />
+                                           FontFamily="Segoe Fluent Icons"
+                                           FontSize="{x:Bind vm:ColumnLayout.Instance.ChevronFontSize, Mode=OneWay}" />
                             </Button>
                             <TextBlock Text="{x:Bind StatusGlyph, Mode=OneWay}"
                                        FontFamily="Segoe Fluent Icons"
-                                       FontSize="12"
+                                       FontSize="{x:Bind vm:ColumnLayout.Instance.GlyphFontSize, Mode=OneWay}"
                                        VerticalAlignment="Center"
                                        Foreground="{x:Bind ThemeKey, Mode=OneWay, Converter={StaticResource BrushKeyConverter}}" />
                             <TextBlock Text="{x:Bind StatusLabel, Mode=OneWay}"
-                                       Style="{StaticResource CellTextStyle}"
+                                       Style="{StaticResource CellTextStyle}" FontSize="{x:Bind vm:ColumnLayout.Instance.CellFontSize, Mode=OneWay}"
                                        FontWeight="SemiBold"
                                        Foreground="{x:Bind ThemeKey, Mode=OneWay, Converter={StaticResource BrushKeyConverter}}" />
                         </StackPanel>
 
-                        <TextBlock Grid.Column="1"  Text="{x:Bind Name}"                    Style="{StaticResource CellTextStyle}"    Visibility="{x:Bind vm:ColumnLayout.Instance.NameVis, Mode=OneWay}" />
-                        <TextBlock Grid.Column="2"  Text="{x:Bind Ip, Mode=OneWay}"         Style="{StaticResource CellTextStyle}"    Visibility="{x:Bind vm:ColumnLayout.Instance.IpVis, Mode=OneWay}"         FontFamily="{StaticResource NumericFont}" />
-                        <TextBlock Grid.Column="3"  Text="{x:Bind Hostname, Mode=OneWay}"   Style="{StaticResource CellTextStyle}"    Visibility="{x:Bind vm:ColumnLayout.Instance.HostnameVis, Mode=OneWay}"   Opacity="0.85" />
-                        <TextBlock Grid.Column="4"  Text="{x:Bind LastOk, Mode=OneWay}"     Style="{StaticResource CellTextStyle}"    Visibility="{x:Bind vm:ColumnLayout.Instance.LastOkVis, Mode=OneWay}"     Opacity="0.85" />
-                        <TextBlock Grid.Column="5"  Text="{x:Bind LastNok, Mode=OneWay}"    Style="{StaticResource CellTextStyle}"    Visibility="{x:Bind vm:ColumnLayout.Instance.LastNokVis, Mode=OneWay}"    Opacity="0.85" />
-                        <TextBlock Grid.Column="6"  Text="{x:Bind Cumulative, Mode=OneWay}" Style="{StaticResource CellTextStyle}"    Visibility="{x:Bind vm:ColumnLayout.Instance.CumulativeVis, Mode=OneWay}" FontFamily="{StaticResource NumericFont}" />
-                        <TextBlock Grid.Column="7"  Text="{x:Bind Rtt, Mode=OneWay}"        Style="{StaticResource NumericCellStyle}" Visibility="{x:Bind vm:ColumnLayout.Instance.RttVis, Mode=OneWay}"        Margin="0,0,10,0" />
-                        <TextBlock Grid.Column="8"  Text="{x:Bind AvgMinMax, Mode=OneWay}"  Style="{StaticResource NumericCellStyle}" Visibility="{x:Bind vm:ColumnLayout.Instance.AvgMinMaxVis, Mode=OneWay}"  Margin="0,0,10,0" Opacity="0.85" />
-                        <TextBlock Grid.Column="9"  Text="{x:Bind Loss, Mode=OneWay}"       Style="{StaticResource NumericCellStyle}" Visibility="{x:Bind vm:ColumnLayout.Instance.LossVis, Mode=OneWay}"       Margin="0,0,10,0" />
-                        <TextBlock Grid.Column="10" Text="{x:Bind Jitter, Mode=OneWay}"     Style="{StaticResource NumericCellStyle}" Visibility="{x:Bind vm:ColumnLayout.Instance.JitterVis, Mode=OneWay}"     Margin="0,0,10,0" Opacity="0.85" />
-                        <TextBlock Grid.Column="11" Text="{x:Bind Fails, Mode=OneWay}"      Style="{StaticResource NumericCellStyle}" Visibility="{x:Bind vm:ColumnLayout.Instance.FailsVis, Mode=OneWay}"      Margin="0,0,10,0" />
+                        <TextBlock Grid.Column="1"  Text="{x:Bind Name}"                    Style="{StaticResource CellTextStyle}" FontSize="{x:Bind vm:ColumnLayout.Instance.CellFontSize, Mode=OneWay}"    Visibility="{x:Bind vm:ColumnLayout.Instance.NameVis, Mode=OneWay}" />
+                        <TextBlock Grid.Column="2"  Text="{x:Bind Ip, Mode=OneWay}"         Style="{StaticResource CellTextStyle}" FontSize="{x:Bind vm:ColumnLayout.Instance.CellFontSize, Mode=OneWay}"    Visibility="{x:Bind vm:ColumnLayout.Instance.IpVis, Mode=OneWay}"         FontFamily="{StaticResource NumericFont}" />
+                        <TextBlock Grid.Column="3"  Text="{x:Bind Hostname, Mode=OneWay}"   Style="{StaticResource CellTextStyle}" FontSize="{x:Bind vm:ColumnLayout.Instance.CellFontSize, Mode=OneWay}"    Visibility="{x:Bind vm:ColumnLayout.Instance.HostnameVis, Mode=OneWay}"   Opacity="0.85" />
+                        <TextBlock Grid.Column="4"  Text="{x:Bind LastOk, Mode=OneWay}"     Style="{StaticResource CellTextStyle}" FontSize="{x:Bind vm:ColumnLayout.Instance.CellFontSize, Mode=OneWay}"    Visibility="{x:Bind vm:ColumnLayout.Instance.LastOkVis, Mode=OneWay}"     Opacity="0.85" />
+                        <TextBlock Grid.Column="5"  Text="{x:Bind LastNok, Mode=OneWay}"    Style="{StaticResource CellTextStyle}" FontSize="{x:Bind vm:ColumnLayout.Instance.CellFontSize, Mode=OneWay}"    Visibility="{x:Bind vm:ColumnLayout.Instance.LastNokVis, Mode=OneWay}"    Opacity="0.85" />
+                        <TextBlock Grid.Column="6"  Text="{x:Bind Cumulative, Mode=OneWay}" Style="{StaticResource CellTextStyle}" FontSize="{x:Bind vm:ColumnLayout.Instance.CellFontSize, Mode=OneWay}"    Visibility="{x:Bind vm:ColumnLayout.Instance.CumulativeVis, Mode=OneWay}" FontFamily="{StaticResource NumericFont}" />
+                        <TextBlock Grid.Column="7"  Text="{x:Bind Rtt, Mode=OneWay}"        Style="{StaticResource NumericCellStyle}" FontSize="{x:Bind vm:ColumnLayout.Instance.CellFontSize, Mode=OneWay}" Visibility="{x:Bind vm:ColumnLayout.Instance.RttVis, Mode=OneWay}"        Margin="0,0,10,0" />
+                        <TextBlock Grid.Column="8"  Text="{x:Bind AvgMinMax, Mode=OneWay}"  Style="{StaticResource NumericCellStyle}" FontSize="{x:Bind vm:ColumnLayout.Instance.CellFontSize, Mode=OneWay}" Visibility="{x:Bind vm:ColumnLayout.Instance.AvgMinMaxVis, Mode=OneWay}"  Margin="0,0,10,0" Opacity="0.85" />
+                        <TextBlock Grid.Column="9"  Text="{x:Bind Loss, Mode=OneWay}"       Style="{StaticResource NumericCellStyle}" FontSize="{x:Bind vm:ColumnLayout.Instance.CellFontSize, Mode=OneWay}" Visibility="{x:Bind vm:ColumnLayout.Instance.LossVis, Mode=OneWay}"       Margin="0,0,10,0" />
+                        <TextBlock Grid.Column="10" Text="{x:Bind Jitter, Mode=OneWay}"     Style="{StaticResource NumericCellStyle}" FontSize="{x:Bind vm:ColumnLayout.Instance.CellFontSize, Mode=OneWay}" Visibility="{x:Bind vm:ColumnLayout.Instance.JitterVis, Mode=OneWay}"     Margin="0,0,10,0" Opacity="0.85" />
+                        <TextBlock Grid.Column="11" Text="{x:Bind Fails, Mode=OneWay}"      Style="{StaticResource NumericCellStyle}" FontSize="{x:Bind vm:ColumnLayout.Instance.CellFontSize, Mode=OneWay}" Visibility="{x:Bind vm:ColumnLayout.Instance.FailsVis, Mode=OneWay}"      Margin="0,0,10,0" />
 
                         <controls:Sparkline Grid.Column="12"
                                             Row="{x:Bind}"
@@ -386,11 +387,11 @@
                                             Margin="0,0,10,0"
                                             VerticalAlignment="Center" />
 
-                        <TextBlock Grid.Column="13" Text="{x:Bind Uptime, Mode=OneWay}"     Style="{StaticResource NumericCellStyle}" Visibility="{x:Bind vm:ColumnLayout.Instance.UptimeVis, Mode=OneWay}"     Margin="0,0,10,0" Opacity="0.85" />
-                        <TextBlock Grid.Column="14" Text="{x:Bind Probe, Mode=OneWay}"      Style="{StaticResource CellTextStyle}"    Visibility="{x:Bind vm:ColumnLayout.Instance.ProbeVis, Mode=OneWay}"      Opacity="0.7" />
-                        <TextBlock Grid.Column="15" Text="{x:Bind Avail24h, Mode=OneWay}"   Style="{StaticResource NumericCellStyle}" Visibility="{x:Bind vm:ColumnLayout.Instance.Avail24hVis, Mode=OneWay}"   Margin="0,0,10,0" />
-                        <TextBlock Grid.Column="16" Text="{x:Bind Avail7d, Mode=OneWay}"    Style="{StaticResource NumericCellStyle}" Visibility="{x:Bind vm:ColumnLayout.Instance.Avail7dVis, Mode=OneWay}"    Margin="0,0,10,0" Opacity="0.85" />
-                        <TextBlock Grid.Column="17" Text="{x:Bind Avail30d, Mode=OneWay}"   Style="{StaticResource NumericCellStyle}" Visibility="{x:Bind vm:ColumnLayout.Instance.Avail30dVis, Mode=OneWay}"   Margin="0,0,10,0" Opacity="0.85" />
+                        <TextBlock Grid.Column="13" Text="{x:Bind Uptime, Mode=OneWay}"     Style="{StaticResource NumericCellStyle}" FontSize="{x:Bind vm:ColumnLayout.Instance.CellFontSize, Mode=OneWay}" Visibility="{x:Bind vm:ColumnLayout.Instance.UptimeVis, Mode=OneWay}"     Margin="0,0,10,0" Opacity="0.85" />
+                        <TextBlock Grid.Column="14" Text="{x:Bind Probe, Mode=OneWay}"      Style="{StaticResource CellTextStyle}" FontSize="{x:Bind vm:ColumnLayout.Instance.CellFontSize, Mode=OneWay}"    Visibility="{x:Bind vm:ColumnLayout.Instance.ProbeVis, Mode=OneWay}"      Opacity="0.7" />
+                        <TextBlock Grid.Column="15" Text="{x:Bind Avail24h, Mode=OneWay}"   Style="{StaticResource NumericCellStyle}" FontSize="{x:Bind vm:ColumnLayout.Instance.CellFontSize, Mode=OneWay}" Visibility="{x:Bind vm:ColumnLayout.Instance.Avail24hVis, Mode=OneWay}"   Margin="0,0,10,0" />
+                        <TextBlock Grid.Column="16" Text="{x:Bind Avail7d, Mode=OneWay}"    Style="{StaticResource NumericCellStyle}" FontSize="{x:Bind vm:ColumnLayout.Instance.CellFontSize, Mode=OneWay}" Visibility="{x:Bind vm:ColumnLayout.Instance.Avail7dVis, Mode=OneWay}"    Margin="0,0,10,0" Opacity="0.85" />
+                        <TextBlock Grid.Column="17" Text="{x:Bind Avail30d, Mode=OneWay}"   Style="{StaticResource NumericCellStyle}" FontSize="{x:Bind vm:ColumnLayout.Instance.CellFontSize, Mode=OneWay}" Visibility="{x:Bind vm:ColumnLayout.Instance.Avail30dVis, Mode=OneWay}"   Margin="0,0,10,0" Opacity="0.85" />
                     </Grid>
 
                     <!-- Detail panel, nested under the host it belongs to: the latency graph, and

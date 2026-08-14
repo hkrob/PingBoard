@@ -46,6 +46,11 @@ public sealed class ColumnFitter
         var widths = new Dictionary<string, double>(StringComparer.Ordinal);
         var materialised = rows as IList<TargetRow> ?? [.. rows];
 
+        // The allowances below are pixel constants describing furniture that itself scales: the
+        // expander chevron, the status glyph, cell padding. Leaving them fixed made the status
+        // column too narrow at high zoom, so "HTTP ERR" bled into the name beside it.
+        var scale = ColumnLayout.Instance.Zoom;
+
         foreach (var id in ColumnLayout.AllIds)
         {
             if (!ColumnLayout.Instance.IsVisible(id)) continue;
@@ -64,11 +69,11 @@ public sealed class ColumnFitter
                 if (w > widest) widest = w;
             }
 
-            widest += Padding;
-            if (id == "Status") widest += StatusExtras;
-            if (Numeric(id)) widest += NumericMargin;
+            widest += Padding * scale;
+            if (id == "Status") widest += StatusExtras * scale;
+            if (Numeric(id)) widest += NumericMargin * scale;
 
-            widths[id] = Math.Clamp(Math.Ceiling(widest), MinWidth, MaxWidth);
+            widths[id] = Math.Clamp(Math.Ceiling(widest), MinWidth * scale, MaxWidth * scale);
         }
 
         return widths;

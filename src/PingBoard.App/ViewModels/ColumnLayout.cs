@@ -192,6 +192,7 @@ public sealed class ColumnLayout : INotifyPropertyChanged
     public double CellFontSize => Math.Round(13 * _zoom, 1);
     public double HeaderFontSize => Math.Round(12 * _zoom, 1);
     public double GlyphFontSize => Math.Round(12 * _zoom, 1);
+    public double ChevronFontSize => Math.Round(10 * _zoom, 1);
 
     /// <summary>Percentage for the status bar, so the current zoom is discoverable.</summary>
     public string ZoomLabel => $"{Math.Round(_zoom * 100)}%";
@@ -261,8 +262,8 @@ public sealed class ColumnLayout : INotifyPropertyChanged
         foreach (var name in new[]
                  {
                      nameof(TotalWidth), nameof(RowHeight), nameof(CellFontSize),
-                     nameof(HeaderFontSize), nameof(GlyphFontSize), nameof(Zoom),
-                     nameof(ZoomLabel), nameof(IsDefaultZoom),
+                     nameof(HeaderFontSize), nameof(GlyphFontSize), nameof(ChevronFontSize),
+                     nameof(Zoom), nameof(ZoomLabel), nameof(IsDefaultZoom),
                  })
         {
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
