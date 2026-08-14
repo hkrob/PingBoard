@@ -77,13 +77,26 @@ public static class UpdateInstaller
     }
 
     /// <summary>
-    /// Only GitHub over HTTPS. The URL comes from a network response, and a downloader that will
-    /// fetch and execute whatever it is handed is a remote code execution primitive.
+    /// The asset URL must be GitHub over HTTPS. It arrives in a network response, and a downloader
+    /// that will fetch and execute whatever it is handed is a remote code execution primitive.
+    /// <para>
+    /// This checks the URL the release API returned, which is always
+    /// <c>github.com/{owner}/{repo}/releases/download/...</c>. GitHub then redirects that to a
+    /// signed, short-lived CDN address — currently <c>release-assets.githubusercontent.com</c>,
+    /// previously <c>objects.githubusercontent.com</c> — and <see cref="HttpClient"/> follows it
+    /// without consulting this method.
+    /// </para>
+    /// <para>
+    /// Listing those CDN hosts here would therefore be theatre: they are never tested, and naming
+    /// them implies a guarantee that is not being made. The guarantee actually offered is that the
+    /// chain <em>starts</em> at GitHub over TLS; where GitHub redirects from there is GitHub's to
+    /// decide, and pinning a hostname they have already changed once would only break the updater
+    /// the next time they change it.
+    /// </para>
     /// </summary>
     private static bool IsTrusted(string url) =>
         Uri.TryCreate(url, UriKind.Absolute, out var uri)
         && uri.Scheme == Uri.UriSchemeHttps
         && (uri.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase)
-            || uri.Host.EndsWith(".github.com", StringComparison.OrdinalIgnoreCase)
-            || uri.Host.Equals("objects.githubusercontent.com", StringComparison.OrdinalIgnoreCase));
+            || uri.Host.EndsWith(".github.com", StringComparison.OrdinalIgnoreCase));
 }

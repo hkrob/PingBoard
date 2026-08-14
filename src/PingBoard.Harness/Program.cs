@@ -14,7 +14,48 @@ internal static class Program
     private static async Task<int> Main(string[] args)
     {
         if (args.Contains("--selftest")) return SelfTest.Run();
+        if (args.Contains("--updatecheck")) return await RunUpdateCheckAsync(args);
 
+        return await RunBoardAsync(args);
+    }
+
+    /// <summary>
+    /// Hits the real GitHub releases API and prints what the app would conclude.
+    /// <para>
+    /// The version to compare against is a parameter rather than the running assembly, because the
+    /// interesting case is the one that cannot otherwise be reached: an <em>older</em> build seeing
+    /// a newer release. Testing only "am I current" exercises the half of the path that never
+    /// matters.
+    /// </para>
+    /// <para>Usage: <c>--updatecheck [current-version]</c>, default 0.0.0.</para>
+    /// </summary>
+    private static async Task<int> RunUpdateCheckAsync(string[] args)
+    {
+        var raw = PositionalArg(args) ?? "0.0.0";
+        var current = UpdateCheck.ParseVersion(raw) ?? new Version(0, 0, 0);
+
+        Console.WriteLine($"pretending to be version {current}");
+        Console.WriteLine("querying the live GitHub releases API...");
+        Console.WriteLine();
+
+        var info = await UpdateCheck.CheckAsync(current, CancellationToken.None);
+
+        if (info.Error is { } error)
+        {
+            Console.WriteLine($"  error       : {error}");
+            return 1;
+        }
+
+        Console.WriteLine($"  latest      : {info.LatestVersion}");
+        Console.WriteLine($"  update?     : {(info.Available ? "YES" : "no, already current")}");
+        Console.WriteLine($"  release page: {info.ReleaseUrl}");
+        Console.WriteLine($"  installer   : {(info.DownloadUrl.Length > 0 ? info.DownloadUrl : "(none attached)")}");
+
+        return 0;
+    }
+
+    private static async Task<int> RunBoardAsync(string[] args)
+    {
         var configPath = PositionalArg(args);
         var seconds = ArgValue(args, "--seconds", 0);
         var save = args.Contains("--save");
