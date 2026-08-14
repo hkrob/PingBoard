@@ -218,6 +218,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
         ApplySort();
         RefreshRows();
+        FitColumnsNow();
     }
 
     private string ResolveLogPath()
@@ -285,6 +286,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         RefreshMuteState();
         RefreshTabs();
         RefreshFilterMembership();
+        FitColumnsIfDue();
 
         // Shown for the same reason as the alert failure above: being muted is a state you must be
         // able to see, or you will trust a monitor that has been told to stay quiet.
@@ -491,6 +493,49 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             tab.Update(total, down, string.Equals(tab.Name, _selectedTab, StringComparison.OrdinalIgnoreCase));
         }
     }
+
+    // ---------------------------------------------------------------- column auto-fit
+
+    private readonly ColumnFitter _fitter = new();
+    private long _nextFitTick;
+
+    /// <summary>
+    /// How often the fit is recomputed. Measuring every row on every 4 Hz tick would be wasted
+    /// work, and — more to the point — columns that re-measure continuously twitch as the latency
+    /// digits change. Two seconds tracks a genuine change in shape without the board moving under
+    /// the cursor.
+    /// </summary>
+    private const int FitIntervalMs = 2000;
+
+    /// <summary>Recomputes column widths now, ignoring the throttle. Used after a structural change.</summary>
+    public void FitColumnsNow()
+    {
+        if (!ColumnLayout.Instance.AutoFit) return;
+
+        _nextFitTick = Environment.TickCount64 + FitIntervalMs;
+
+        var layout = ColumnLayout.Instance;
+        ColumnLayout.Instance.ApplyFit(_fitter.Measure(Rows, layout.CellFontSize, layout.HeaderFontSize, BoardFont));
+    }
+
+    private void FitColumnsIfDue()
+    {
+        if (!ColumnLayout.Instance.AutoFit) return;
+
+        var now = Environment.TickCount64;
+        if (now < _nextFitTick) return;
+
+        _nextFitTick = now + FitIntervalMs;
+
+        var layout = ColumnLayout.Instance;
+        layout.ApplyFit(_fitter.Measure(Rows, layout.CellFontSize, layout.HeaderFontSize, BoardFont));
+    }
+
+    /// <summary>
+    /// Face the board is currently rendered in, so measurement matches what is drawn. Null means
+    /// the inherited default; the Matrix theme swaps it for a monospaced family.
+    /// </summary>
+    public Microsoft.UI.Xaml.Media.FontFamily? BoardFont { get; set; }
 
     /// <summary>Asks every row to re-resolve its status brush after a palette change.</summary>
     public void RefreshStatusBrushes()

@@ -1,3 +1,4 @@
+using System.Globalization;
 using Microsoft.UI;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
@@ -54,6 +55,22 @@ public sealed partial class MainWindow : Window
         };
 
         ColumnLayout.Instance.Zoom = _uiState.ZoomPercent / 100.0;
+        ColumnLayout.Instance.AutoFit = _uiState.AutoFitColumns;
+        _board.SetAutoFitChecked(_uiState.AutoFitColumns);
+
+        _board.AutoFitChanged += on =>
+        {
+            _uiState.AutoFitColumns = on;
+            _uiState.Save();
+        };
+
+        _board.SetUpdateCheckChecked(_uiState.CheckUpdatesOnStartup);
+
+        _board.UpdateCheckChanged += on =>
+        {
+            _uiState.CheckUpdatesOnStartup = on;
+            _uiState.Save();
+        };
 
         _board.ZoomChanged += zoom =>
         {
@@ -108,6 +125,8 @@ public sealed partial class MainWindow : Window
 
             Notifications.Initialize();
             _tray = new TrayIcon(this);
+
+            _ = CheckForUpdatesAsync();
 
             // A minimized start with no tray icon would leave the app running with no way to reach
             // it — invisible, and apparently unresponsive. Showing the window is the lesser evil.
@@ -169,14 +188,19 @@ public sealed partial class MainWindow : Window
             {
                 MatrixTheme.Apply(_board);
                 RootGrid.Background = MatrixTheme.PlateBrush;
+
+                // Column fitting measures text, so it has to measure in the face actually drawn.
+                Vm.BoardFont = MatrixTheme.Font;
             }
             else
             {
                 MatrixTheme.Revert(_board);
                 RootGrid.ClearValue(Microsoft.UI.Xaml.Controls.Panel.BackgroundProperty);
+                Vm.BoardFont = null;
             }
 
             _board.ApplyPalette();
+            Vm.FitColumnsNow();
         }
         catch (Exception ex)
         {
@@ -204,6 +228,49 @@ public sealed partial class MainWindow : Window
         caption.ButtonInactiveForegroundColor = isLight
             ? Color.FromArgb(160, 0, 0, 0)
             : Color.FromArgb(160, 255, 255, 255);
+    }
+
+    /// <summary>
+    /// Asks GitHub for a newer release shortly after startup, at most once a day.
+    /// <para>
+    /// Fire-and-forget and entirely silent unless there is something to say. A monitoring tool that
+    /// interrupts you at launch to report that it is already up to date has spent your attention on
+    /// nothing — and attention is the currency this whole application is trying to protect. A
+    /// failed check says nothing at all: the network being down is what the board is for, not a
+    /// reason to nag.
+    /// </para>
+    /// </summary>
+    private async Task CheckForUpdatesAsync()
+    {
+        if (!_uiState.CheckUpdatesOnStartup) return;
+
+        if (DateTimeOffset.TryParse(_uiState.LastUpdateCheck, CultureInfo.InvariantCulture,
+                DateTimeStyles.RoundtripKind, out var last)
+            && DateTimeOffset.Now - last < TimeSpan.FromDays(1))
+        {
+            return;
+        }
+
+        try
+        {
+            // A moment's grace so the check never competes with getting the board on screen.
+            await Task.Delay(TimeSpan.FromSeconds(5));
+
+            var info = await UpdateCheck.CheckAsync(AboutDialog.Current, CancellationToken.None);
+
+            _uiState.LastUpdateCheck = DateTimeOffset.Now.ToString("o", CultureInfo.InvariantCulture);
+            _uiState.Save();
+
+            if (info is { Available: true, LatestVersion: { } version })
+            {
+                DispatcherQueue.TryEnqueue(() =>
+                    Vm.ShowBanner($"PingBoard {version} is available — open About to install it."));
+            }
+        }
+        catch (Exception ex)
+        {
+            CrashLog.Write(ex);
+        }
     }
 
     // ---------------------------------------------------------------- placement

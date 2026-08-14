@@ -37,6 +37,7 @@ internal static class SelfTest
             WebhookDeliversATransition();
             TraceRouteFindsThePath();
             TabsGroupWithoutGating(scratch);
+            UpdateVersionComparison();
         }
         finally
         {
@@ -848,6 +849,36 @@ internal static class SelfTest
         Check("tabs: re-enabling a tab does not un-pause a hand-paused host", !host.IsActive);
 
         host.Dispose();
+    }
+
+    /// <summary>
+    /// Release-tag parsing, which is what decides whether the app offers to replace itself.
+    /// <para>
+    /// Getting this wrong in either direction is bad: too eager and it nags about an upgrade that
+    /// is not one, too lax and a real release goes unnoticed. The network half is not exercised
+    /// here — it needs GitHub — but the comparison is pure and worth pinning.
+    /// </para>
+    /// </summary>
+    private static void UpdateVersionComparison()
+    {
+        Check("update: plain tag parses", UpdateCheck.ParseVersion("1.3.0") == new Version(1, 3, 0));
+        Check("update: leading v is tolerated", UpdateCheck.ParseVersion("v1.3.0") == new Version(1, 3, 0));
+        Check("update: two-part tag implies a zero patch",
+            UpdateCheck.ParseVersion("v2.1") == new Version(2, 1, 0));
+        Check("update: junk yields null", UpdateCheck.ParseVersion("not-a-release") is null);
+        Check("update: empty yields null", UpdateCheck.ParseVersion("") is null);
+
+        // Ordering is what "is an update available" actually means.
+        Check("update: a later minor is newer",
+            UpdateCheck.ParseVersion("v1.4.0") > UpdateCheck.ParseVersion("v1.3.9"));
+        Check("update: a later patch is newer",
+            UpdateCheck.ParseVersion("v1.3.1") > UpdateCheck.ParseVersion("v1.3.0"));
+        Check("update: the same version is not an update",
+            UpdateCheck.ParseVersion("v1.3.0") == UpdateCheck.ParseVersion("1.3.0"));
+        Check("update: an older tag is not an update",
+            UpdateCheck.ParseVersion("v1.2.0") < UpdateCheck.ParseVersion("v1.3.0"));
+        Check("update: 10 sorts above 9, not below",
+            UpdateCheck.ParseVersion("v1.10.0") > UpdateCheck.ParseVersion("v1.9.0"));
     }
 
     /// <summary>A port the OS has just confirmed is free, so the test does not collide with a real service.</summary>

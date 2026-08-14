@@ -79,8 +79,78 @@ public sealed class ColumnLayout : INotifyPropertyChanged
     public GridLength Uptime => Width(nameof(Uptime));
     public GridLength Probe => Width(nameof(Probe));
 
-    private GridLength Width([CallerMemberName] string id = "") =>
-        _hidden.Contains(id) ? new GridLength(0) : new GridLength(Natural[id] * _zoom);
+    private GridLength Width([CallerMemberName] string id = "")
+    {
+        if (_hidden.Contains(id)) return new GridLength(0);
+
+        // A fitted width is already in final pixels — it was measured at the current font size,
+        // which the zoom has been applied to — so it must not be scaled a second time.
+        return _fitted.TryGetValue(id, out var fitted)
+            ? new GridLength(fitted)
+            : new GridLength(Natural[id] * _zoom);
+    }
+
+    // ------------------------------------------------------------------ auto-fit
+    //
+    // Widths measured from what is actually on the board, rather than the fixed guesses above.
+    //
+    // The hazard is jitter, not measurement: RTT and "Last OK" change several times a second, and
+    // a column that resizes on every tick makes the board unreadable and unclickable. So a fitted
+    // width is only adopted when it differs from the current one by more than a few pixels, and
+    // the caller throttles how often it recomputes. Both together mean a column moves when the
+    // content genuinely changes shape - a longer hostname, a third digit of latency - and stays
+    // put otherwise.
+
+    /// <summary>Smallest change worth moving a column for. Below this the board would just twitch.</summary>
+    private const double FitThreshold = 6;
+
+    private readonly Dictionary<string, double> _fitted = [];
+
+    private bool _autoFit;
+
+    public bool AutoFit
+    {
+        get => _autoFit;
+        set
+        {
+            if (_autoFit == value) return;
+
+            _autoFit = value;
+            if (!value) _fitted.Clear();       // fall back to the natural widths
+            RaiseAll();
+        }
+    }
+
+    /// <summary>
+    /// Stops continuously re-fitting but keeps the widths already measured, so a one-shot "fit
+    /// now" does not quietly switch continuous fitting on as a side effect.
+    /// </summary>
+    public void StopTracking() => _autoFit = false;
+
+    /// <summary>
+    /// Adopts newly measured widths. Returns true when anything actually moved, so the caller can
+    /// avoid raising change notifications for a board that is already the right shape.
+    /// </summary>
+    public bool ApplyFit(IReadOnlyDictionary<string, double> measured)
+    {
+        if (!_autoFit) return false;
+
+        var moved = false;
+
+        foreach (var (id, width) in measured)
+        {
+            if (!Natural.ContainsKey(id)) continue;
+
+            if (_fitted.TryGetValue(id, out var current) && Math.Abs(current - width) < FitThreshold)
+                continue;
+
+            _fitted[id] = width;
+            moved = true;
+        }
+
+        if (moved) RaiseAll();
+        return moved;
+    }
 
     // ------------------------------------------------------------------ zoom
     //
@@ -189,7 +259,9 @@ public sealed class ColumnLayout : INotifyPropertyChanged
 
     /// <summary>Sum of visible widths, so the header and rows can size the scroll extent together.</summary>
     public double TotalWidth =>
-        Natural.Where(kv => !_hidden.Contains(kv.Key)).Sum(kv => kv.Value) * _zoom;
+        Natural.Keys
+            .Where(id => !_hidden.Contains(id))
+            .Sum(id => _fitted.TryGetValue(id, out var fitted) ? fitted : Natural[id] * _zoom);
 
     public static IEnumerable<string> AllIds => Natural.Keys;
 

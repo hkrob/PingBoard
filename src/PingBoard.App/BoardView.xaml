@@ -155,6 +155,12 @@
 
             <AppBarSeparator />
 
+            <Button Click="OnAbout"
+                    ToolTipService.ToolTip="About PingBoard, and check for updates"
+                    AutomationProperties.Name="About PingBoard">
+                <TextBlock Text="&#xE946;" FontFamily="Segoe Fluent Icons" FontSize="13" />
+            </Button>
+
             <Button ToolTipService.ToolTip="File, statistics and settings"
                     AutomationProperties.Name="File, statistics and settings">
                 <TextBlock Text="&#xE712;" FontFamily="Segoe Fluent Icons" FontSize="13" />
@@ -184,6 +190,15 @@
                             <RadioMenuFlyoutItem x:Name="ThemeDark"   Text="Dark"           GroupName="theme" Click="OnThemeDark" />
                             <RadioMenuFlyoutItem x:Name="ThemeMatrix" Text="Matrix"         GroupName="theme" Click="OnThemeMatrix" />
                         </MenuFlyoutSubItem>
+                        <MenuFlyoutSeparator />
+                        <ToggleMenuFlyoutItem x:Name="AutoFitColumns"
+                                              Text="Auto-fit column widths"
+                                              Click="OnToggleAutoFit" />
+                        <MenuFlyoutItem Text="Fit columns now" Click="OnFitColumnsNow" />
+                        <MenuFlyoutSeparator />
+                        <ToggleMenuFlyoutItem x:Name="CheckUpdatesOnStartup"
+                                              Text="Check for updates on startup"
+                                              Click="OnToggleUpdateCheck" />
                         <MenuFlyoutSeparator />
                         <ToggleMenuFlyoutItem x:Name="StartWithWindows"
                                               Text="Start with Windows"

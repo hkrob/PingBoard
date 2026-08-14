@@ -5,6 +5,16 @@
     <TargetFramework>net10.0-windows10.0.26100.0</TargetFramework>
     <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
     <RootNamespace>PingBoard.App</RootNamespace>
+
+    <!--
+      One source of truth for the version. The About box reads it from the assembly and the update
+      check compares it against the newest GitHub release tag, so a release that forgets to bump
+      this would immediately, visibly offer itself as an upgrade.
+      Keep in step with installer\PingBoard.iss.
+    -->
+    <Version>1.4.0</Version>
+    <Company>hkrob</Company>
+    <Product>PingBoard</Product>
     <ApplicationManifest>app.manifest</ApplicationManifest>
 
     <!--

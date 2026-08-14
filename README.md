@@ -56,7 +56,7 @@ structurally — it is a separate project — so the part that has to be correct
 stress-tested without XAML in the way.
 
 ```bash
-dotnet run --project src/PingBoard.Harness -- --selftest        # 125 assertions
+dotnet run --project src/PingBoard.Harness -- --selftest        # 135 assertions
 dotnet run --project src/PingBoard.Harness -- board.ini --seconds 300
 ```
 
@@ -210,6 +210,24 @@ than one that never alerted.
 and font sizes that layout already reads rather than applying a render transform — WinUI has no
 `LayoutTransform`, and scaling pixels would blur the text and drift the header out of alignment with
 the rows.
+
+**Columns fit their content** by default, remeasured every couple of seconds and only moved when a
+width changes by more than a few pixels. Both guards matter: latency and "Last OK" change several
+times a second, and a column that resizes on every tick moves under the cursor and makes the board
+unusable. Text is measured rather than estimated per character — the board runs in three faces and
+scales with zoom, so an estimate would be wrong by a different amount in each. Toggle it, or fit
+once, from the ⚙ menu.
+
+**About** (the ⓘ button) carries the version and a link to the project, and checks GitHub for a
+newer release. It also checks quietly at startup, at most once a day, and says nothing unless there
+is something to say — a tool that interrupts you at launch to report it is already up to date has
+spent your attention on nothing. Turn it off in the ⚙ menu.
+
+An update is **offered, never installed**. Silently replacing the binary of something you are
+relying on to watch your network is not a decision this code gets to make: it tells you, and you
+choose. The download URL is restricted to GitHub over HTTPS, because it arrives in a network
+response and a downloader that will run whatever it is handed is a remote code execution
+primitive.
 
 **Filtering** is a text box over name, IP and hostname plus a status filter. Filtered-out targets
 keep being probed and keep alerting; the status bar always says how many of the total you are

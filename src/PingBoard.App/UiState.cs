@@ -31,6 +31,22 @@ public sealed class UiState
     /// <summary>Board zoom, as a percentage. Per-machine, like everything else in this file.</summary>
     public int ZoomPercent { get; set; } = 100;
 
+    /// <summary>Size columns to their content rather than to the fixed natural widths.</summary>
+    public bool AutoFitColumns { get; set; } = true;
+
+    /// <summary>
+    /// Ask GitHub for a newer release shortly after launch. Opt-out, and visible in the menu: a
+    /// monitoring tool that quietly phones home on every start is a reasonable thing to object to.
+    /// </summary>
+    public bool CheckUpdatesOnStartup { get; set; } = true;
+
+    /// <summary>
+    /// When the last startup check ran, ISO-8601. Used to check roughly daily rather than on every
+    /// launch — this app is normally started once and left running for weeks, but a machine that
+    /// reboots often should not generate a request every time.
+    /// </summary>
+    public string LastUpdateCheck { get; set; } = "";
+
     /// <summary>
     /// "System", "Light", "Dark" or "Matrix". System follows the Windows setting live; Matrix is
     /// the green-phosphor terminal palette layered over Dark.
@@ -58,6 +74,9 @@ public sealed class UiState
             state.Theme = section.GetString(nameof(Theme), state.Theme);
             state.MuteUntil = section.GetString(nameof(MuteUntil), "");
             state.ZoomPercent = Math.Clamp(section.GetInt(nameof(ZoomPercent), 100), 70, 250);
+            state.AutoFitColumns = section.GetBool(nameof(AutoFitColumns), true);
+            state.CheckUpdatesOnStartup = section.GetBool(nameof(CheckUpdatesOnStartup), true);
+            state.LastUpdateCheck = section.GetString(nameof(LastUpdateCheck), "");
 
             var last = section.GetString(nameof(LastConfigPath), "");
             state.LastConfigPath = last.Length > 0 ? last : null;
@@ -86,6 +105,9 @@ public sealed class UiState
             section.Set(nameof(Theme), Theme);
             if (MuteUntil.Length > 0) section.Set(nameof(MuteUntil), MuteUntil);
             if (ZoomPercent != 100) section.Set(nameof(ZoomPercent), ZoomPercent);
+            section.Set(nameof(AutoFitColumns), AutoFitColumns);
+            section.Set(nameof(CheckUpdatesOnStartup), CheckUpdatesOnStartup);
+            if (LastUpdateCheck.Length > 0) section.Set(nameof(LastUpdateCheck), LastUpdateCheck);
             if (LastConfigPath is { Length: > 0 } path) section.Set(nameof(LastConfigPath), path);
 
             ini.SaveAtomic(AppPaths.UiStateFile);

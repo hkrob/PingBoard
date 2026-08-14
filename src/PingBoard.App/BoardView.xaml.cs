@@ -271,6 +271,61 @@ public sealed partial class BoardView : UserControl
         }
     }
 
+    private async void OnAbout(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            await AboutDialog.ShowAsync(XamlRoot);
+        }
+        catch (Exception ex)
+        {
+            // An async void handler that throws takes the process with it.
+            CrashLog.Write(ex);
+        }
+    }
+
+    // ---------------------------------------------------------------- columns
+
+    /// <summary>Raised when auto-fit is toggled, so the window can persist it.</summary>
+    public event Action<bool>? AutoFitChanged;
+
+    /// <summary>Reflects the restored setting in the menu without reporting it back as a change.</summary>
+    public void SetAutoFitChecked(bool on) => AutoFitColumns.IsChecked = on;
+
+    /// <summary>Raised when the startup update check is toggled, so the window can persist it.</summary>
+    public event Action<bool>? UpdateCheckChanged;
+
+    public void SetUpdateCheckChecked(bool on) => CheckUpdatesOnStartup.IsChecked = on;
+
+    private void OnToggleUpdateCheck(object sender, RoutedEventArgs e) =>
+        UpdateCheckChanged?.Invoke(CheckUpdatesOnStartup.IsChecked);
+
+    private void OnToggleAutoFit(object sender, RoutedEventArgs e)
+    {
+        ColumnLayout.Instance.AutoFit = AutoFitColumns.IsChecked;
+
+        // Measure straight away rather than waiting for the throttle: the user just asked for it,
+        // and a menu item that takes two seconds to do anything reads as broken.
+        Vm.FitColumnsNow();
+        AutoFitChanged?.Invoke(AutoFitColumns.IsChecked);
+    }
+
+    /// <summary>One-shot fit, for when auto-fit is off or the content has just changed shape.</summary>
+    private void OnFitColumnsNow(object sender, RoutedEventArgs e)
+    {
+        var wasOn = ColumnLayout.Instance.AutoFit;
+
+        ColumnLayout.Instance.AutoFit = true;
+        Vm.FitColumnsNow();
+
+        if (!wasOn)
+        {
+            // Leave the fitted widths in place but stop tracking, so a one-off fit does not
+            // silently turn continuous fitting on.
+            ColumnLayout.Instance.StopTracking();
+        }
+    }
+
     // ---------------------------------------------------------------- zoom
 
     /// <summary>Raised when the zoom changes, so the window can persist it.</summary>
