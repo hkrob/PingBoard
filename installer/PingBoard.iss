@@ -8,7 +8,7 @@
 ; Output lands in installer\output\PingBoard-<version>-setup.exe.
 
 #define AppName        "PingBoard"
-#define AppVersion     "1.5.0"
+#define AppVersion     "1.6.0"
 #define AppPublisher   "hkrob"
 #define AppExeName     "PingBoard.App.exe"
 #define AppUrl         "https://github.com/hkrob/PingBoard"

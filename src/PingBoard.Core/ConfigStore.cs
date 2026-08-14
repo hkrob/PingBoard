@@ -368,8 +368,67 @@ public static class ConfigStore
 public static class StateStore
 {
     private const string Header =
-        "PingBoard persisted counters. Generated file — safe to delete.\n" +
-        "Deleting it resets all lifetime statistics.";
+        "PingBoard persisted counters and probe history. Generated file — safe to delete.\n" +
+        "Deleting it resets all statistics, including the sparkline and latency graph.";
+
+    /// <summary>
+    /// Encodes retained probe history as <c>status:rtt</c> pairs.
+    /// <para>
+    /// Only status and round-trip time are kept, because only those are ever read back: the
+    /// rolling statistics, the sparkline and the latency graph all work from them alone. The
+    /// timestamps are deliberately dropped — a monotonic tick from a process that has exited means
+    /// nothing, and a wall-clock time would imply the samples are positioned in time when both
+    /// charts plot them by index.
+    /// </para>
+    /// <para>
+    /// Compact on purpose: 300 samples across 40 targets is 12,000 of these, and the sidecar is
+    /// rewritten every minute.
+    /// </para>
+    /// </summary>
+    public static string EncodeHistory(IReadOnlyList<ProbeResult> samples)
+    {
+        var sb = new System.Text.StringBuilder(samples.Count * 6);
+
+        foreach (var sample in samples)
+        {
+            if (sb.Length > 0) sb.Append(',');
+            sb.Append((int)sample.Status).Append(':').Append(sample.RttMs);
+        }
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Decodes what <see cref="EncodeHistory"/> wrote, skipping anything malformed rather than
+    /// throwing — a corrupt sidecar should cost the history, never the launch.
+    /// </summary>
+    public static List<ProbeResult> DecodeHistory(string encoded)
+    {
+        var samples = new List<ProbeResult>();
+        if (encoded.Length == 0) return samples;
+
+        foreach (var pair in encoded.Split(',', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var colon = pair.IndexOf(':');
+            if (colon <= 0) continue;
+
+            if (!int.TryParse(pair.AsSpan(0, colon), NumberStyles.Integer, CultureInfo.InvariantCulture, out var status))
+                continue;
+
+            if (!int.TryParse(pair.AsSpan(colon + 1), NumberStyles.Integer, CultureInfo.InvariantCulture, out var rtt))
+                continue;
+
+            if (!Enum.IsDefined(typeof(TargetStatus), status)) continue;
+
+            var kind = (TargetStatus)status;
+
+            samples.Add(kind.IsOk() && rtt >= 0
+                ? ProbeResult.Ok(rtt, System.Net.IPAddress.None, 0, default)
+                : ProbeResult.Fail(kind, 0, default));
+        }
+
+        return samples;
+    }
 
     public static Dictionary<string, TargetCounters> Load(string path)
     {
@@ -398,6 +457,36 @@ public static class StateStore
         return result;
     }
 
+    /// <summary>
+    /// Probe history per target name, for restoring the sparkline and latency graph across a
+    /// restart. Empty when the sidecar predates history or has none.
+    /// </summary>
+    public static Dictionary<string, List<ProbeResult>> LoadHistory(string path)
+    {
+        var result = new Dictionary<string, List<ProbeResult>>(StringComparer.OrdinalIgnoreCase);
+        if (!File.Exists(path) && !File.Exists(path + ".bak")) return result;
+
+        IniFile ini;
+        try { ini = IniFile.LoadResilient(path); }
+        catch (IOException) { return result; }
+        catch (UnauthorizedAccessException) { return result; }
+
+        foreach (var section in ini.WithPrefix(ConfigStore.TargetPrefix))
+        {
+            var name = section.Name[ConfigStore.TargetPrefix.Length..].Trim();
+            if (name.Length == 0) continue;
+
+            var encoded = section.GetString(HistoryKey, "");
+            if (encoded.Length == 0) continue;
+
+            result[name] = DecodeHistory(encoded);
+        }
+
+        return result;
+    }
+
+    private const string HistoryKey = "History";
+
     public static void Save(string path, IEnumerable<PingTarget> targets)
     {
         var ini = new IniFile();
@@ -415,6 +504,11 @@ public static class StateStore
                 section.Set(nameof(TargetCounters.LastOk), ok.ToString("o", CultureInfo.InvariantCulture));
             if (c.LastNok is { } nok)
                 section.Set(nameof(TargetCounters.LastNok), nok.ToString("o", CultureInfo.InvariantCulture));
+
+            // Last, so the readable counters stay at the top of each section rather than being
+            // pushed below a very long line.
+            var history = target.HistorySnapshot();
+            if (history.Length > 0) section.Set(HistoryKey, EncodeHistory(history));
         }
 
         ini.SaveAtomic(path);

@@ -71,6 +71,53 @@
             <TextBlock FontSize="12" Opacity="0.65" TextWrapping="Wrap"
                        Text="A relative path is resolved next to the config file. Only transitions are logged, never individual probes — the log stays a few lines a week rather than millions." />
 
+            <!-- Webhook and email were configurable only by hand-editing the ini, which made a
+                 shipped feature effectively invisible. Collapsed by default so the dialog does not
+                 open onto a wall of fields nobody using tray notifications needs. -->
+            <Expander Header="Send alerts to a webhook or by email" HorizontalAlignment="Stretch">
+                <StackPanel Spacing="10" Padding="0,8">
+
+                    <TextBlock FontSize="12" Opacity="0.65" TextWrapping="Wrap"
+                               Text="A tray notification only reaches you while you are sitting at this machine — which is when you would have noticed the board turn red anyway. These reach you when you are not." />
+
+                    <CheckBox x:Name="WebhookCheck" Content="POST to a webhook" />
+                    <TextBox x:Name="WebhookUrlBox" Header="Webhook URL"
+                             PlaceholderText="https://hooks.example.com/abc" />
+                    <PasswordBox x:Name="WebhookAuthBox" Header="Authorization header (optional)"
+                                 PlaceholderText="Bearer …" />
+
+                    <CheckBox x:Name="EmailCheck" Content="Send email" Margin="0,6,0,0" />
+                    <TextBox x:Name="SmtpHostBox" Header="SMTP server" PlaceholderText="smtp.example.com" />
+                    <StackPanel Orientation="Horizontal" Spacing="12">
+                        <NumberBox x:Name="SmtpPortBox" Header="Port" Width="120"
+                                   Minimum="1" Maximum="65535" SpinButtonPlacementMode="Inline" />
+                        <CheckBox x:Name="StartTlsCheck" Content="Use TLS" VerticalAlignment="Bottom"
+                                  Margin="0,0,0,6" />
+                    </StackPanel>
+                    <TextBox x:Name="SmtpUserBox" Header="Username (blank for none)" />
+                    <PasswordBox x:Name="SmtpPasswordBox" Header="Password" />
+                    <TextBox x:Name="EmailFromBox" Header="From" PlaceholderText="pingboard@example.com" />
+                    <TextBox x:Name="EmailToBox" Header="To" PlaceholderText="you@example.com" />
+
+                    <TextBlock FontSize="12" Opacity="0.65" TextWrapping="Wrap"
+                               Text="Credentials are encrypted with DPAPI for this Windows account, so a config file copied to another machine or into a repository carries no usable secret — and must have them re-entered there." />
+
+                    <StackPanel Orientation="Horizontal" Spacing="12">
+                        <NumberBox x:Name="MinIntervalBox" Header="Minimum seconds between alerts" Width="230"
+                                   Minimum="0" Maximum="86400" SpinButtonPlacementMode="Inline" />
+                        <CheckBox x:Name="NotifyRecoveryCheck" Content="Also alert on recovery"
+                                  VerticalAlignment="Bottom" Margin="0,0,0,6" />
+                    </StackPanel>
+
+                    <StackPanel Orientation="Horizontal" Spacing="12">
+                        <Button x:Name="TestAlertButton" Content="Send a test alert" Click="OnSendTestAlert" />
+                        <TextBlock x:Name="TestAlertResult" VerticalAlignment="Center"
+                                   FontSize="12" Opacity="0.75" TextWrapping="Wrap" />
+                    </StackPanel>
+
+                </StackPanel>
+            </Expander>
+
         </StackPanel>
     </ScrollViewer>
 

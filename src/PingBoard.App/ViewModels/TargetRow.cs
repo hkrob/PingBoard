@@ -43,6 +43,12 @@ public sealed partial class TargetRow : ObservableObject
     [ObservableProperty] public partial string Rtt { get; private set; } = "—";
     [ObservableProperty] public partial string AvgMinMax { get; private set; } = "—";
     [ObservableProperty] public partial string Loss { get; private set; } = "—";
+
+    /// <summary>
+    /// Mean absolute successive difference across consecutive replies. Already computed on every
+    /// stats pass; until now it only appeared in the hover tooltip.
+    /// </summary>
+    [ObservableProperty] public partial string Jitter { get; private set; } = "—";
     [ObservableProperty] public partial string Fails { get; private set; } = "";
     [ObservableProperty] public partial string Uptime { get; private set; } = "—";
     [ObservableProperty] public partial string Probe { get; private set; } = "icmp";
@@ -178,6 +184,12 @@ public sealed partial class TargetRow : ObservableObject
             : "—";
 
         Loss = st.HasData ? st.LossPercent.ToString("F1", CultureInfo.CurrentCulture) : "—";
+
+        // Needs at least two consecutive replies to mean anything; one sample has nothing to
+        // differ from, and printing 0.0 would read as a perfectly stable link.
+        Jitter = st is { HasData: true, OkSamples: > 1 }
+            ? st.JitterMs.ToString("F1", CultureInfo.CurrentCulture)
+            : "—";
         Fails = s.ConsecutiveFailures > 0 ? s.ConsecutiveFailures.ToString(CultureInfo.CurrentCulture) : "";
 
         var counters = Target.Counters;

@@ -56,7 +56,7 @@ structurally — it is a separate project — so the part that has to be correct
 stress-tested without XAML in the way.
 
 ```bash
-dotnet run --project src/PingBoard.Harness -- --selftest        # 151 assertions
+dotnet run --project src/PingBoard.Harness -- --selftest        # 164 assertions
 dotnet run --project src/PingBoard.Harness -- board.ini --seconds 300
 ```
 
@@ -123,8 +123,15 @@ Each tab shows a live tally (`WAN · 2 down`) so a problem cannot hide behind an
 the strip is hidden entirely while there is only one group. A board that never used tabs
 round-trips unchanged.
 
-Counters live in a sidecar (`board.state.ini`), so the file you edit stays free of churning
-numbers. Deleting the sidecar resets all statistics; there is a menu item for the same thing.
+Counters *and probe history* live in a sidecar (`board.state.ini`), so the file you edit stays free
+of churning numbers. Deleting the sidecar resets all statistics; there is a menu item for the same
+thing.
+
+History is persisted as compact `status:rtt` pairs, so the sparkline and the latency graph come
+back populated after a restart rather than spending the next five minutes filling in. Only status
+and round-trip time are kept, because only those are read back — the timestamps are dropped
+deliberately, since a monotonic tick from a process that has exited means nothing and both charts
+plot by index anyway.
 
 `Probe=tcp` exists because plenty of hosts and most corporate firewalls drop ICMP silently, which
 would otherwise read as a permanently dead target. A completed TCP handshake also proves more than
@@ -198,6 +205,10 @@ state this app can be in — the board looks healthy and you believe you will be
 **Status · IP · Hostname · Last OK · Last NOK · OK/NOK** are shown by default, along with **RTT**,
 **Loss %** and **History**. Right-click the Columns button for avg/min/max, consecutive failures,
 uptime and probe type.
+
+**Jitter** is mean absolute successive difference across consecutive replies — a better feel for
+link quality than standard deviation, and the number that moves first when a connection starts to
+degrade while loss is still zero.
 
 **Loss %** is the one worth reading day to day. It is a rolling window over the last N probes; the
 lifetime OK/NOK count is dragged down forever by an outage three days ago and stops describing the

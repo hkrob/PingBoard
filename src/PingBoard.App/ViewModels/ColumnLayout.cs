@@ -37,6 +37,7 @@ public sealed class ColumnLayout : INotifyPropertyChanged
         [nameof(Rtt)] = 64,
         [nameof(AvgMinMax)] = 132,
         [nameof(Loss)] = 68,
+        [nameof(Jitter)] = 74,
         [nameof(Fails)] = 52,
         [nameof(Spark)] = 110,
         [nameof(Uptime)] = 68,
@@ -74,6 +75,7 @@ public sealed class ColumnLayout : INotifyPropertyChanged
     public GridLength Rtt => Width(nameof(Rtt));
     public GridLength AvgMinMax => Width(nameof(AvgMinMax));
     public GridLength Loss => Width(nameof(Loss));
+    public GridLength Jitter => Width(nameof(Jitter));
     public GridLength Fails => Width(nameof(Fails));
     public GridLength Spark => Width(nameof(Spark));
     public GridLength Uptime => Width(nameof(Uptime));
@@ -207,6 +209,7 @@ public sealed class ColumnLayout : INotifyPropertyChanged
     public Visibility RttVis => Vis(nameof(Rtt));
     public Visibility AvgMinMaxVis => Vis(nameof(AvgMinMax));
     public Visibility LossVis => Vis(nameof(Loss));
+    public Visibility JitterVis => Vis(nameof(Jitter));
     public Visibility FailsVis => Vis(nameof(Fails));
     public Visibility SparkVis => Vis(nameof(Spark));
     public Visibility UptimeVis => Vis(nameof(Uptime));
@@ -278,6 +281,7 @@ public sealed class ColumnLayout : INotifyPropertyChanged
         nameof(Rtt) => "RTT",
         nameof(AvgMinMax) => "avg / min / max",
         nameof(Loss) => "Loss %",
+        nameof(Jitter) => "Jitter",
         nameof(Fails) => "Fail",
         nameof(Spark) => "History",
         nameof(Uptime) => "Uptime",

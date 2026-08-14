@@ -184,7 +184,9 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
         _settings = config.Settings;
 
-        var counters = StateStore.Load(ConfigStore.StatePathFor(configPath));
+        var statePath = ConfigStore.StatePathFor(configPath);
+        var counters = StateStore.Load(statePath);
+        var history = StateStore.LoadHistory(statePath);
 
         _scheduler = new ProbeScheduler(_settings);
         _scheduler.Transition += OnTransition;
@@ -196,6 +198,11 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         {
             counters.TryGetValue(targetConfig.Name, out var saved);
             var target = new PingTarget(targetConfig, _settings, saved);
+
+            // Restored before the row is built, so the sparkline and graph have something to draw
+            // on the first frame rather than filling in over the next five minutes.
+            if (history.TryGetValue(targetConfig.Name, out var samples)) target.RestoreHistory(samples);
+
             _scheduler.AddTarget(target);
             Rows.Add(new TargetRow(target));
         }

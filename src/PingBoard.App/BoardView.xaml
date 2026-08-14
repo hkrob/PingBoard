@@ -242,6 +242,7 @@
                     <ColumnDefinition Width="{x:Bind vm:ColumnLayout.Instance.Rtt, Mode=OneWay}" />
                     <ColumnDefinition Width="{x:Bind vm:ColumnLayout.Instance.AvgMinMax, Mode=OneWay}" />
                     <ColumnDefinition Width="{x:Bind vm:ColumnLayout.Instance.Loss, Mode=OneWay}" />
+                    <ColumnDefinition Width="{x:Bind vm:ColumnLayout.Instance.Jitter, Mode=OneWay}" />
                     <ColumnDefinition Width="{x:Bind vm:ColumnLayout.Instance.Fails, Mode=OneWay}" />
                     <ColumnDefinition Width="{x:Bind vm:ColumnLayout.Instance.Spark, Mode=OneWay}" />
                     <ColumnDefinition Width="{x:Bind vm:ColumnLayout.Instance.Uptime, Mode=OneWay}" />
@@ -263,10 +264,11 @@
                 <TextBlock Grid.Column="7"  x:Name="HdrRtt"        Tag="RTT"             Text="RTT"             Style="{StaticResource HeaderTextStyle}" Tapped="OnSortRtt"        Visibility="{x:Bind vm:ColumnLayout.Instance.RttVis, Mode=OneWay}"        HorizontalAlignment="Right" Margin="0,0,10,0" />
                 <TextBlock Grid.Column="8"                                               Text="avg / min / max" Style="{StaticResource HeaderTextStyle}"                           Visibility="{x:Bind vm:ColumnLayout.Instance.AvgMinMaxVis, Mode=OneWay}"  HorizontalAlignment="Right" Margin="0,0,10,0" />
                 <TextBlock Grid.Column="9"  x:Name="HdrLoss"       Tag="Loss %"          Text="Loss %"          Style="{StaticResource HeaderTextStyle}" Tapped="OnSortLoss"       Visibility="{x:Bind vm:ColumnLayout.Instance.LossVis, Mode=OneWay}"       HorizontalAlignment="Right" Margin="0,0,10,0" />
-                <TextBlock Grid.Column="10"                                              Text="Fail"            Style="{StaticResource HeaderTextStyle}"                           Visibility="{x:Bind vm:ColumnLayout.Instance.FailsVis, Mode=OneWay}"      HorizontalAlignment="Right" Margin="0,0,10,0" />
-                <TextBlock Grid.Column="11"                                              Text="History"         Style="{StaticResource HeaderTextStyle}"                           Visibility="{x:Bind vm:ColumnLayout.Instance.SparkVis, Mode=OneWay}" />
-                <TextBlock Grid.Column="12" x:Name="HdrUptime"     Tag="Uptime"          Text="Uptime"          Style="{StaticResource HeaderTextStyle}" Tapped="OnSortUptime"     Visibility="{x:Bind vm:ColumnLayout.Instance.UptimeVis, Mode=OneWay}"     HorizontalAlignment="Right" Margin="0,0,10,0" />
-                <TextBlock Grid.Column="13"                                              Text="Probe"           Style="{StaticResource HeaderTextStyle}"                           Visibility="{x:Bind vm:ColumnLayout.Instance.ProbeVis, Mode=OneWay}" />
+                <TextBlock Grid.Column="10"                        Tag="Jitter"          Text="Jitter"          Style="{StaticResource HeaderTextStyle}"                           Visibility="{x:Bind vm:ColumnLayout.Instance.JitterVis, Mode=OneWay}"     HorizontalAlignment="Right" Margin="0,0,10,0" />
+                <TextBlock Grid.Column="11"                                              Text="Fail"            Style="{StaticResource HeaderTextStyle}"                           Visibility="{x:Bind vm:ColumnLayout.Instance.FailsVis, Mode=OneWay}"      HorizontalAlignment="Right" Margin="0,0,10,0" />
+                <TextBlock Grid.Column="12"                                              Text="History"         Style="{StaticResource HeaderTextStyle}"                           Visibility="{x:Bind vm:ColumnLayout.Instance.SparkVis, Mode=OneWay}" />
+                <TextBlock Grid.Column="13" x:Name="HdrUptime"     Tag="Uptime"          Text="Uptime"          Style="{StaticResource HeaderTextStyle}" Tapped="OnSortUptime"     Visibility="{x:Bind vm:ColumnLayout.Instance.UptimeVis, Mode=OneWay}"     HorizontalAlignment="Right" Margin="0,0,10,0" />
+                <TextBlock Grid.Column="14"                                              Text="Probe"           Style="{StaticResource HeaderTextStyle}"                           Visibility="{x:Bind vm:ColumnLayout.Instance.ProbeVis, Mode=OneWay}" />
             </Grid>
         </Border>
 
@@ -318,6 +320,7 @@
                             <ColumnDefinition Width="{x:Bind vm:ColumnLayout.Instance.Rtt, Mode=OneWay}" />
                             <ColumnDefinition Width="{x:Bind vm:ColumnLayout.Instance.AvgMinMax, Mode=OneWay}" />
                             <ColumnDefinition Width="{x:Bind vm:ColumnLayout.Instance.Loss, Mode=OneWay}" />
+                            <ColumnDefinition Width="{x:Bind vm:ColumnLayout.Instance.Jitter, Mode=OneWay}" />
                             <ColumnDefinition Width="{x:Bind vm:ColumnLayout.Instance.Fails, Mode=OneWay}" />
                             <ColumnDefinition Width="{x:Bind vm:ColumnLayout.Instance.Spark, Mode=OneWay}" />
                             <ColumnDefinition Width="{x:Bind vm:ColumnLayout.Instance.Uptime, Mode=OneWay}" />
@@ -360,9 +363,10 @@
                         <TextBlock Grid.Column="7"  Text="{x:Bind Rtt, Mode=OneWay}"        Style="{StaticResource NumericCellStyle}" Visibility="{x:Bind vm:ColumnLayout.Instance.RttVis, Mode=OneWay}"        Margin="0,0,10,0" />
                         <TextBlock Grid.Column="8"  Text="{x:Bind AvgMinMax, Mode=OneWay}"  Style="{StaticResource NumericCellStyle}" Visibility="{x:Bind vm:ColumnLayout.Instance.AvgMinMaxVis, Mode=OneWay}"  Margin="0,0,10,0" Opacity="0.85" />
                         <TextBlock Grid.Column="9"  Text="{x:Bind Loss, Mode=OneWay}"       Style="{StaticResource NumericCellStyle}" Visibility="{x:Bind vm:ColumnLayout.Instance.LossVis, Mode=OneWay}"       Margin="0,0,10,0" />
-                        <TextBlock Grid.Column="10" Text="{x:Bind Fails, Mode=OneWay}"      Style="{StaticResource NumericCellStyle}" Visibility="{x:Bind vm:ColumnLayout.Instance.FailsVis, Mode=OneWay}"      Margin="0,0,10,0" />
+                        <TextBlock Grid.Column="10" Text="{x:Bind Jitter, Mode=OneWay}"     Style="{StaticResource NumericCellStyle}" Visibility="{x:Bind vm:ColumnLayout.Instance.JitterVis, Mode=OneWay}"     Margin="0,0,10,0" Opacity="0.85" />
+                        <TextBlock Grid.Column="11" Text="{x:Bind Fails, Mode=OneWay}"      Style="{StaticResource NumericCellStyle}" Visibility="{x:Bind vm:ColumnLayout.Instance.FailsVis, Mode=OneWay}"      Margin="0,0,10,0" />
 
-                        <controls:Sparkline Grid.Column="11"
+                        <controls:Sparkline Grid.Column="12"
                                             Row="{x:Bind}"
                                             Version="{x:Bind HistoryVersion, Mode=OneWay}"
                                             Visibility="{x:Bind vm:ColumnLayout.Instance.SparkVis, Mode=OneWay}"
@@ -370,8 +374,8 @@
                                             Margin="0,0,10,0"
                                             VerticalAlignment="Center" />
 
-                        <TextBlock Grid.Column="12" Text="{x:Bind Uptime, Mode=OneWay}"     Style="{StaticResource NumericCellStyle}" Visibility="{x:Bind vm:ColumnLayout.Instance.UptimeVis, Mode=OneWay}"     Margin="0,0,10,0" Opacity="0.85" />
-                        <TextBlock Grid.Column="13" Text="{x:Bind Probe, Mode=OneWay}"      Style="{StaticResource CellTextStyle}"    Visibility="{x:Bind vm:ColumnLayout.Instance.ProbeVis, Mode=OneWay}"      Opacity="0.7" />
+                        <TextBlock Grid.Column="13" Text="{x:Bind Uptime, Mode=OneWay}"     Style="{StaticResource NumericCellStyle}" Visibility="{x:Bind vm:ColumnLayout.Instance.UptimeVis, Mode=OneWay}"     Margin="0,0,10,0" Opacity="0.85" />
+                        <TextBlock Grid.Column="14" Text="{x:Bind Probe, Mode=OneWay}"      Style="{StaticResource CellTextStyle}"    Visibility="{x:Bind vm:ColumnLayout.Instance.ProbeVis, Mode=OneWay}"      Opacity="0.7" />
                     </Grid>
 
                     <!-- Detail panel, nested under the host it belongs to: the latency graph, and

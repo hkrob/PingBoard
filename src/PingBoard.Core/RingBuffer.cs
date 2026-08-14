@@ -128,6 +128,38 @@ public sealed class RingBuffer
         }
     }
 
+    /// <summary>Everything retained, oldest first. For persistence.</summary>
+    public ProbeResult[] Snapshot() => Recent(_items.Length);
+
+    /// <summary>
+    /// Refills the buffer from persisted samples, discarding whatever it held.
+    /// <para>
+    /// Restored samples carry no monotonic timestamp — the tick count they were recorded against
+    /// belongs to a process that no longer exists. Nothing reads it: the rolling statistics and
+    /// both charts work from status and round-trip time alone, and durations are measured from the
+    /// live <c>_downSinceTick</c> rather than from history.
+    /// </para>
+    /// </summary>
+    public void Restore(IReadOnlyList<ProbeResult> samples)
+    {
+        lock (_gate)
+        {
+            Array.Clear(_items);
+            _next = 0;
+            _count = 0;
+
+            // Only the newest capacity-worth matter if the window was shrunk between runs.
+            var start = Math.Max(0, samples.Count - _items.Length);
+
+            for (var i = start; i < samples.Count; i++)
+            {
+                _items[_next] = samples[i];
+                _next = (_next + 1) % _items.Length;
+                if (_count < _items.Length) _count++;
+            }
+        }
+    }
+
     /// <summary>Maps a chronological index (0 = oldest retained) onto the backing array.</summary>
     private int Index(int chronological)
     {

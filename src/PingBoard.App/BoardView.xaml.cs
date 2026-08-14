@@ -138,9 +138,14 @@ public sealed partial class BoardView : UserControl
     {
         try
         {
-            var dialog = new SettingsDialog(Vm.Settings) { XamlRoot = XamlRoot };
-            if (await dialog.ShowAsync() == ContentDialogResult.Primary && dialog.Result is { } settings)
-                Vm.ApplySettings(settings);
+            var dialog = new SettingsDialog(Vm.Settings, Vm.AlertSettings, Vm) { XamlRoot = XamlRoot };
+
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+
+            // Alerts first: ApplySettings saves the config, and it must write the alert block the
+            // user just edited rather than the one loaded at startup.
+            if (dialog.AlertResult is { } alerts) Vm.ApplyAlertSettings(alerts);
+            if (dialog.Result is { } settings) Vm.ApplySettings(settings);
         }
         catch (Exception ex) { CrashLog.Write(ex); }
     }

@@ -24,6 +24,7 @@ internal static class SelfTest
             HandEditedFileSurvives(scratch);
             AtomicWriteKeepsOldFileIntact(scratch);
             CountersRoundTrip(scratch);
+            HistorySurvivesRestart(scratch);
             RingBufferRolls();
             RingBufferIgnoresInactiveSamples();
             StatusMapping();
@@ -270,6 +271,80 @@ internal static class SelfTest
         Check("state: missing file yields empty", StateStore.Load(Path.Combine(dir, "nope.state.ini")).Count == 0);
 
         target.Dispose();
+    }
+
+    /// <summary>
+    /// History survives a restart.
+    /// <para>
+    /// Counters have always persisted, but the samples did not — so every sparkline and latency
+    /// graph came back empty. That mattered little when the sparkline was the only chart; it
+    /// undermines the latency graph completely, whose entire value is comparing current latency
+    /// against the target's own baseline.
+    /// </para>
+    /// </summary>
+    private static void HistorySurvivesRestart(string dir)
+    {
+        var configPath = Path.Combine(dir, "history.ini");
+        var statePath = ConfigStore.StatePathFor(configPath);
+
+        var settings = new Settings { RollingWindow = 50 };
+        var target = new PingTarget(new TargetConfig { Name = "gw", Address = "10.1.10.1" }, settings);
+        var now = DateTimeOffset.Now;
+
+        for (var i = 1; i <= 10; i++)
+            target.Record(ProbeResult.Ok(i, System.Net.IPAddress.Loopback, i, now), 3);
+
+        target.Record(ProbeResult.Fail(TargetStatus.Timeout, 20, now), 3);
+        target.Record(ProbeResult.Fail(TargetStatus.HttpError, 21, now), 3);
+
+        var before = target.Snapshot().Stats;
+        StateStore.Save(statePath, [target]);
+
+        // A fresh process: new target object, history read back off disk.
+        var restored = new PingTarget(new TargetConfig { Name = "gw", Address = "10.1.10.1" }, settings);
+        var loaded = StateStore.LoadHistory(statePath);
+
+        Check("history: the sidecar carries history", loaded.ContainsKey("gw"));
+        restored.RestoreHistory(loaded["gw"]);
+
+        var after = restored.Snapshot().Stats;
+
+        Check("history: sample count survives", after.Samples == before.Samples);
+        Check("history: loss percentage survives",
+            Math.Abs(after.LossPercent - before.LossPercent) < 0.001);
+        Check("history: min/max round-trip survive",
+            after.MinMs == before.MinMs && after.MaxMs == before.MaxMs);
+        Check("history: average survives", Math.Abs(after.AvgMs - before.AvgMs) < 0.001);
+        Check("history: jitter survives", Math.Abs(after.JitterMs - before.JitterMs) < 0.001);
+
+        // The sparkline reads chronological order, so the shape has to come back the same way up.
+        var recent = restored.RecentHistory(12);
+        Check("history: chronological order preserved",
+            recent.Length == 12 && recent[0].RttMs == 1 && recent[9].RttMs == 10);
+        Check("history: failure statuses are preserved exactly",
+            recent[10].Status == TargetStatus.Timeout && recent[11].Status == TargetStatus.HttpError);
+
+        // Encoding edge cases: a corrupt sidecar costs the history, never the launch.
+        Check("history: garbage decodes to nothing",
+            StateStore.DecodeHistory("not,valid,data").Count == 0);
+        Check("history: empty decodes to nothing", StateStore.DecodeHistory("").Count == 0);
+        Check("history: a malformed pair is skipped, the rest kept",
+            StateStore.DecodeHistory("1:5,rubbish,1:7").Count == 2);
+        Check("history: an out-of-range status is skipped",
+            StateStore.DecodeHistory("999:5").Count == 0);
+
+        // Shrinking the window between runs must keep the newest samples, not the oldest.
+        var narrow = new PingTarget(new TargetConfig { Name = "gw", Address = "10.1.10.1" },
+                                    new Settings { RollingWindow = 10 });
+        narrow.RestoreHistory(loaded["gw"]);
+
+        var kept = narrow.RecentHistory(10);
+        Check("history: a shrunk window keeps the newest samples",
+            kept.Length == 10 && kept[^1].Status == TargetStatus.HttpError);
+
+        target.Dispose();
+        restored.Dispose();
+        narrow.Dispose();
     }
 
     private static void RingBufferRolls()

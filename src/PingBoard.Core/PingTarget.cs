@@ -337,6 +337,12 @@ public sealed class PingTarget : IDisposable
 
     public ProbeResult[] RecentHistory(int n) => _history.Recent(n);
 
+    /// <summary>Retained history, oldest first, for the state sidecar.</summary>
+    public ProbeResult[] HistorySnapshot() => _history.Snapshot();
+
+    /// <summary>Restores history saved by a previous run.</summary>
+    public void RestoreHistory(IReadOnlyList<ProbeResult> samples) => _history.Restore(samples);
+
     /// <summary>
     /// The trace taken at the last failure, or null if there has not been one. Kept on the target
     /// rather than only logged, so the UI can show where the path broke while it is still broken.
