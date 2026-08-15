@@ -56,7 +56,7 @@ structurally — it is a separate project — so the part that has to be correct
 stress-tested without XAML in the way.
 
 ```bash
-dotnet run --project src/PingBoard.Harness -- --selftest        # 202 assertions
+dotnet run --project src/PingBoard.Harness -- --selftest        # 223 assertions
 dotnet run --project src/PingBoard.Harness -- board.ini --seconds 300
 ```
 
@@ -289,6 +289,19 @@ The **Theme** submenu carries Follow Windows / Light / Dark, plus **Matrix** —
 black plate, monospaced throughout. Failure states stay chromatically distinct there rather than
 collapsing into shades of green, because a board you cannot read at a glance has lost the one
 thing it is for.
+
+**While you were away.** Restore the window after it has been in the tray or minimised for a couple
+of minutes and, *if anything transitioned*, the banner says what: which targets dropped, for how
+long, and which are still down. Nothing is shown when nothing happened — silence already means all
+was well, and a message confirming it would spend attention and return none.
+
+This exists for the case nothing else catches: a target that dropped for four minutes while the
+window was in the tray and then recovered leaves no trace anyone will ever see. The notification
+came and went, the CSV goes unread, and the board only ever shows the present. An intermittent
+fault is the hard kind to catch, and it is the one this reports.
+
+Losing focus does not count as being away — alt-tabbing for ten seconds is not absence, and
+treating it as such would fire the summary until you learned to ignore it.
 
 **Mute** silences desktop notifications for an hour, twelve hours, or until switched back on. It
 does *not* touch webhook or email alerting: those exist to reach you when you are away from this

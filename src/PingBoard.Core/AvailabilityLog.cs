@@ -138,6 +138,28 @@ public sealed class AvailabilityLog
         return log;
     }
 
+    /// <summary>
+    /// Formats an availability figure for display.
+    /// <para>
+    /// Lives here rather than in the view because both rules are about not overstating, which is a
+    /// claim about the data rather than a detail of how it looks. A perfect score prints as a bare
+    /// <c>100</c> — the decimals carry nothing there. A figure below 100 never rounds <em>up</em>
+    /// to it: 99.996 shows as 99.99, because a target that dropped a probe did not have a perfect
+    /// period, and near the top is exactly where the decimals mean something. Null is an em dash,
+    /// never 100, because "no data" and "flawless" are not the same statement.
+    /// </para>
+    /// </summary>
+    public static string Format(double? percent)
+    {
+        if (percent is not { } value) return "—";
+        if (value >= 100) return "100";
+
+        var rounded = Math.Round(value, 2, MidpointRounding.AwayFromZero);
+        if (rounded >= 100) rounded = 99.99;
+
+        return rounded.ToString("F2", CultureInfo.CurrentCulture);
+    }
+
     /// <summary>Discards everything, for "reset statistics".</summary>
     public void Clear()
     {

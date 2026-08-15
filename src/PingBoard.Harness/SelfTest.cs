@@ -27,6 +27,7 @@ internal static class SelfTest
             HistorySurvivesRestart(scratch);
             MaintenanceWindows();
             HostCatalogIsUsable();
+            WhileYouWereAway();
             AvailabilityOverDays();
             RingBufferRolls();
             RingBufferIgnoresInactiveSamples();
@@ -482,6 +483,19 @@ internal static class SelfTest
         Check("availability: an impossible bucket is rejected",
             AvailabilityLog.Decode("100:50:10").Percent(24, now) is null);
 
+        // Formatting. Both rules exist to stop the number flattering itself.
+        Check("availability: a perfect score drops the decimals", AvailabilityLog.Format(100) == "100");
+        Check("availability: no data is an em dash, not 100", AvailabilityLog.Format(null) == "—");
+
+        // The one that matters: a target that dropped a probe did not have a perfect period, and
+        // rounding it up to 100 would put a false claim in front of whoever reads the column.
+        Check("availability: 99.996 does not round up to 100", AvailabilityLog.Format(99.996) == "99.99");
+        Check("availability: 99.999 does not round up to 100", AvailabilityLog.Format(99.999) == "99.99");
+
+        Check("availability: ordinary figures keep two decimals", AvailabilityLog.Format(99.5) == "99.50");
+        Check("availability: a middling figure is unchanged", AvailabilityLog.Format(62.31) == "62.31");
+        Check("availability: total failure reads as zero", AvailabilityLog.Format(0) == "0.00");
+
         // Beyond the ring, the oldest data is simply gone rather than wrapping into the present.
         var old = new AvailabilityLog();
         old.Record(TargetStatus.Timeout, now.AddHours(-(AvailabilityLog.MaxHours + 5)));
@@ -552,6 +566,72 @@ internal static class SelfTest
 
         Console.WriteLine($"        (detected {local.Count} local hosts: "
                           + string.Join(", ", local.Select(e => $"{e.Name}={e.Address}")) + ")");
+    }
+
+    /// <summary>
+    /// The "while you were away" summary, which exists to catch the intermittent fault that
+    /// resolves itself before anyone looks at the board.
+    /// </summary>
+    private static void WhileYouWereAway()
+    {
+        var journal = new TransitionJournal();
+        var start = DateTimeOffset.Now.AddHours(-2);
+        var now = DateTimeOffset.Now;
+
+        // Silence when nothing happened. A message saying all is well costs attention and returns
+        // none, which is the thing this whole application is trying not to do.
+        Check("away: nothing happened means no message", journal.Summarise(start, now) is null);
+
+        // Anything before the user left is not theirs to be told about.
+        journal.Add(new StateTransition("old", Up: false, start.AddHours(-1), TimeSpan.Zero, TargetStatus.Timeout, 3));
+        Check("away: transitions from before the window are ignored", journal.Summarise(start, now) is null);
+
+        // A target that dropped and recovered - the case that otherwise leaves no trace at all.
+        journal.Add(new StateTransition("nas", Up: false, start.AddMinutes(10), TimeSpan.Zero, TargetStatus.Timeout, 3));
+        journal.Add(new StateTransition("nas", Up: true, start.AddMinutes(14), TimeSpan.FromMinutes(4), TargetStatus.Ok, 3));
+
+        var recovered = journal.Summarise(start, now);
+        Check("away: a recovered outage is reported", recovered is not null);
+        Check("away: it names the target", recovered!.Contains("nas", StringComparison.Ordinal));
+        Check("away: it gives the outage length", recovered.Contains("4m", StringComparison.Ordinal));
+        Check("away: it says the target is back", recovered.Contains("now up", StringComparison.Ordinal));
+        Check("away: it states how long the user was gone", recovered.Contains("2h", StringComparison.Ordinal));
+
+        // A target still down matters more than one that recovered, and must read differently.
+        journal.Add(new StateTransition("gateway", Up: false, start.AddMinutes(30), TimeSpan.Zero, TargetStatus.Timeout, 3));
+
+        var stillDown = journal.Summarise(start, now)!;
+        Check("away: a target still down is called out", stillDown.Contains("still down", StringComparison.Ordinal));
+        Check("away: with the time it went", stillDown.Contains(start.AddMinutes(30).ToString("HH:mm"), StringComparison.Ordinal));
+
+        // Repeated flapping is a different diagnosis from one long outage, so it reads differently.
+        var flapper = new TransitionJournal();
+        for (var i = 0; i < 3; i++)
+        {
+            flapper.Add(new StateTransition("wan", Up: false, start.AddMinutes(i * 10), TimeSpan.Zero, TargetStatus.Timeout, 3));
+            flapper.Add(new StateTransition("wan", Up: true, start.AddMinutes((i * 10) + 2), TimeSpan.FromMinutes(2), TargetStatus.Ok, 3));
+        }
+
+        var flapping = flapper.Summarise(start, now)!;
+        Check("away: repeated drops are counted, not collapsed",
+            flapping.Contains("dropped 3 times", StringComparison.Ordinal));
+
+        // A line naming forty hosts is dismissed, not read.
+        var many = new TransitionJournal();
+        for (var i = 0; i < 6; i++)
+            many.Add(new StateTransition($"host{i}", Up: false, start.AddMinutes(i), TimeSpan.Zero, TargetStatus.Timeout, 3));
+
+        var trimmed = many.Summarise(start, now, maxNamed: 3)!;
+        Check("away: only the first few are named", trimmed.Contains("and 3 others", StringComparison.Ordinal));
+        Check("away: a later host is not named", !trimmed.Contains("host5", StringComparison.Ordinal));
+
+        // Bounded like every other buffer here.
+        var flood = new TransitionJournal();
+        for (var i = 0; i < 500; i++)
+            flood.Add(new StateTransition($"t{i}", Up: false, start.AddSeconds(i), TimeSpan.Zero, TargetStatus.Timeout, 3));
+
+        Check("away: the journal is capped", flood.Since(start).Count <= 200);
+        Check("away: and keeps the newest", flood.Since(start).Last().TargetName == "t499");
     }
 
     private static void RingBufferRolls()

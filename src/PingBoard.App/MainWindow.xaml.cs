@@ -97,6 +97,17 @@ public sealed partial class MainWindow : Window
         Closed += OnClosed;
         AppWindow.Closing += OnAppWindowClosing;
 
+        // Minimising and restoring never passes through BringToFront, which only the tray uses,
+        // so the presenter state is watched directly. Changed fires for moves and resizes too;
+        // ReportWhileAway is a no-op unless the window was actually put away.
+        AppWindow.Changed += (sender, _) =>
+        {
+            if (sender.Presenter is not OverlappedPresenter presenter) return;
+
+            if (presenter.State == OverlappedPresenterState.Minimized) _awaySince ??= DateTimeOffset.Now;
+            else ReportWhileAway();
+        };
+
         _ = InitializeAsync();
     }
 
@@ -323,6 +334,8 @@ public sealed partial class MainWindow : Window
         Vm.SaveCounters();
         AppWindow.Hide();
         _tray.ShowHiddenHint();
+
+        _awaySince = DateTimeOffset.Now;
     }
 
     /// <summary>Exits for real, bypassing hide-to-tray. Called from the tray menu.</summary>
@@ -354,7 +367,49 @@ public sealed partial class MainWindow : Window
     /// a window on the screen for a frame or two at every login, which is precisely the behaviour
     /// this is meant to avoid.
     /// </summary>
-    public void StartHidden() => AppWindow.Hide();
+    public void StartHidden()
+    {
+        AppWindow.Hide();
+        _awaySince = DateTimeOffset.Now;
+    }
+
+    // ---------------------------------------------------------------- while you were away
+
+    /// <summary>
+    /// When the window was last put away, or null while it is on screen.
+    /// <para>
+    /// "Away" means hidden to the tray or minimised — states where the board is genuinely not
+    /// being looked at. Losing focus deliberately does not count: alt-tabbing to another window
+    /// for ten seconds is not being away, and treating it as such would fire this summary
+    /// constantly until the user learned to ignore it.
+    /// </para>
+    /// </summary>
+    private DateTimeOffset? _awaySince;
+
+    /// <summary>
+    /// Below this, there is nothing worth summarising and the interruption is not earned.
+    /// </summary>
+    private static readonly TimeSpan AwayThreshold = TimeSpan.FromMinutes(2);
+
+    private void ReportWhileAway()
+    {
+        if (_awaySince is not { } since) return;
+
+        // Still not being looked at: hidden in the tray, or minimised. Leave the clock running
+        // rather than clearing it, or a stray window event would swallow the summary before
+        // anyone could read it.
+        if (!AppWindow.IsVisible) return;
+        if (AppWindow.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Minimized }) return;
+
+        _awaySince = null;
+
+        var now = DateTimeOffset.Now;
+        if (now - since < AwayThreshold) return;
+
+        // Null when nothing transitioned, and nothing is shown in that case. Silence already
+        // means everything was fine.
+        if (Vm.Journal.Summarise(since, now) is { } summary) Vm.ShowBanner(summary);
+    }
 
     public void BringToFront()
     {
@@ -364,6 +419,7 @@ public sealed partial class MainWindow : Window
             presenter.Restore();
 
         Activate();
+        ReportWhileAway();
     }
 
     public void ShowFatalError(Exception ex)

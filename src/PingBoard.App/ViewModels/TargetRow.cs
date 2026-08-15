@@ -155,14 +155,20 @@ public sealed partial class TargetRow : ObservableObject
     }
 
     /// <summary>
-    /// Availability to two decimals, or an em dash when the period has no data at all.
+    /// Availability, or an em dash when the period has no data at all.
     /// <para>
     /// A target added this morning genuinely has no thirty-day figure. Showing 100% for it would
     /// be a lie of the most flattering kind — the number people quote in reports.
     /// </para>
+    /// <para>
+    /// Two formatting rules, both about not overstating. A perfect score prints as a bare
+    /// <c>100</c>: the decimals carry no information there and cost a third of the column. And a
+    /// figure below 100 never rounds <em>up</em> to it — 99.996 shows as 99.99, because a target
+    /// that dropped a probe did not have a perfect period, and near the top is exactly where the
+    /// decimals mean something.
+    /// </para>
     /// </summary>
-    private static string FormatAvailability(double? percent) =>
-        percent is { } value ? value.ToString("F2", CultureInfo.CurrentCulture) : "—";
+    private static string FormatAvailability(double? percent) => AvailabilityLog.Format(percent);
 
     /// <summary>Bumped whenever history changes, so the sparkline knows to redraw.</summary>
     [ObservableProperty] public partial int HistoryVersion { get; private set; }
@@ -210,7 +216,9 @@ public sealed partial class TargetRow : ObservableObject
         Fails = s.ConsecutiveFailures > 0 ? s.ConsecutiveFailures.ToString(CultureInfo.CurrentCulture) : "";
 
         var counters = Target.Counters;
-        Uptime = counters.Total > 0 ? counters.UptimePercent.ToString("F2", CultureInfo.CurrentCulture) : "—";
+        // Same treatment as the rolling figures: it is the same kind of number and had the same
+        // two problems.
+        Uptime = counters.Total > 0 ? FormatAvailability(counters.UptimePercent) : "—";
 
         var asOf = DateTimeOffset.Now;
         Avail24h = FormatAvailability(Target.Availability.Percent(24, asOf));

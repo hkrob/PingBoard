@@ -12,7 +12,7 @@
       this would immediately, visibly offer itself as an upgrade.
       Keep in step with installer\PingBoard.iss.
     -->
-    <Version>1.8.0</Version>
+    <Version>1.9.0</Version>
     <Company>hkrob</Company>
     <Product>PingBoard</Product>
     <ApplicationManifest>app.manifest</ApplicationManifest>

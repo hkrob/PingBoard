@@ -329,10 +329,16 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         // Sorting is applied on demand instead, when the user picks a column.
     }
 
+    /// <summary>
+    /// Recent transitions, so the window can report what happened while it was in the tray.
+    /// </summary>
+    public TransitionJournal Journal { get; } = new();
+
     private void OnTransition(StateTransition transition)
     {
         _countersDirty = true;
         _log?.Write(transition);
+        Journal.Add(transition);
 
         // Queued, not sent, and deliberately from this threadpool thread rather than the
         // dispatcher: an unreachable SMTP server blocks for its full TCP timeout, and putting that
