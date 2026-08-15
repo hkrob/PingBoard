@@ -31,6 +31,24 @@ public sealed class TabConfig
     /// <summary>Display order. Ties fall back to the order the sections appear in the file.</summary>
     public int Order { get; set; }
 
+    /// <summary>
+    /// Silences notifications for this group without stopping it being probed.
+    /// <para>
+    /// Distinct from <see cref="Enabled"/>, and the difference is the whole point. Disabling a tab
+    /// stops the probes: no data, no history, no statistics. Muting keeps every one of those and
+    /// only withholds the interruption — for the group of hosts you know is noisy and want on the
+    /// board but not in your face. Turning a tab off to stop it nagging would throw away the
+    /// record of what it did.
+    /// </para>
+    /// <para>
+    /// It suppresses desktop notifications and webhook and email alerts alike, unlike the global
+    /// mute button which is deliberately desktop-only. Muting a tab is a statement about those
+    /// hosts; muting the app is a statement about this machine, and something reaching you
+    /// elsewhere should survive the latter.
+    /// </para>
+    /// </summary>
+    public bool Muted { get; set; }
+
     public TabConfig Clone() => (TabConfig)MemberwiseClone();
 
     /// <summary>Normalises a tab name, mapping blank onto the default group.</summary>

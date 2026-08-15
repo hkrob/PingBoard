@@ -56,7 +56,7 @@ structurally — it is a separate project — so the part that has to be correct
 stress-tested without XAML in the way.
 
 ```bash
-dotnet run --project src/PingBoard.Harness -- --selftest        # 223 assertions
+dotnet run --project src/PingBoard.Harness -- --selftest        # 240 assertions
 dotnet run --project src/PingBoard.Harness -- board.ini --seconds 300
 ```
 
@@ -143,6 +143,17 @@ the way counting the silence would.
 Each tab shows a live tally (`WAN · 2 down`) so a problem cannot hide behind an unselected tab, and
 the strip is hidden entirely while there is only one group. A board that never used tabs
 round-trips unchanged.
+
+Right-click a tab to **mute** or **disable** it, and note that these are different things. Muting
+(`Muted=true`) silences that group's alerts while it carries on being probed — for hosts you want on
+the board but not in your face. Disabling stops the probes and loses the record of what those hosts
+did. A muted tab carries a permanent mark, because a silenced group you have forgotten about is
+worse than one that never alerted: you are still trusting it. Unmuting a host that is still down
+alerts then, exactly as leaving a maintenance window does.
+
+Muting a tab suppresses webhook and email too, unlike the global mute button which is deliberately
+desktop-only. Muting a tab is a statement about those hosts; muting the app is a statement about
+this machine, and something meant to reach you elsewhere should survive the latter.
 
 Counters *and probe history* live in a sidecar (`board.state.ini`), so the file you edit stays free
 of churning numbers. Deleting the sidecar resets all statistics; there is a menu item for the same
@@ -319,7 +330,9 @@ the rows.
 width changes by more than a few pixels. Both guards matter: latency and "Last OK" change several
 times a second, and a column that resizes on every tick moves under the cursor and makes the board
 unusable. Text is measured rather than estimated per character — the board runs in three faces and
-scales with zoom, so an estimate would be wrong by a different amount in each. Toggle it, or fit
+scales with zoom, so an estimate would be wrong by a different amount in each. **Arrange columns…**
+in the same menu reorders them; the order is data, so a cell's position and the width of the slot it
+sits in both follow one list rather than being written into the markup twice. Toggle it, or fit
 once, from the ⚙ menu.
 
 **About** (the ⓘ button) carries the version and a link to the project, and checks GitHub for a

@@ -23,6 +23,15 @@ public sealed partial class TabItem : ObservableObject
     /// <summary>False stops every target in this tab from being probed.</summary>
     [ObservableProperty] public partial bool IsEnabled { get; set; } = true;
 
+    /// <summary>True silences this group's alerts while it carries on being probed.</summary>
+    [ObservableProperty] public partial bool IsMuted { get; set; }
+
+    /// <summary>
+    /// Bell-with-slash on a muted tab. Shown permanently and on purpose: a silenced group you have
+    /// forgotten about is worse than one that never alerted, because you are still trusting it.
+    /// </summary>
+    [ObservableProperty] public partial Visibility MutedMarkVisibility { get; private set; } = Visibility.Collapsed;
+
     /// <summary>"LAN", or "LAN · 2 down" when something in it is failing.</summary>
     [ObservableProperty] public partial string Label { get; private set; } = "";
 
@@ -42,6 +51,7 @@ public sealed partial class TabItem : ObservableObject
 
         TabOpacity = IsEnabled ? 1.0 : 0.45;
         DisabledMarkVisibility = IsEnabled ? Visibility.Collapsed : Visibility.Visible;
+        MutedMarkVisibility = IsMuted ? Visibility.Visible : Visibility.Collapsed;
         SelectionOpacity = selected ? 1.0 : 0.55;
     }
 }

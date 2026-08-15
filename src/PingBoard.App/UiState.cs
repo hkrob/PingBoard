@@ -34,6 +34,9 @@ public sealed class UiState
     /// <summary>Size columns to their content rather than to the fixed natural widths.</summary>
     public bool AutoFitColumns { get; set; } = true;
 
+    /// <summary>Column display order, as a comma-separated list of ids. Blank means the default.</summary>
+    public string ColumnOrder { get; set; } = "";
+
     /// <summary>
     /// Ask GitHub for a newer release shortly after launch. Opt-out, and visible in the menu: a
     /// monitoring tool that quietly phones home on every start is a reasonable thing to object to.
@@ -75,6 +78,7 @@ public sealed class UiState
             state.MuteUntil = section.GetString(nameof(MuteUntil), "");
             state.ZoomPercent = Math.Clamp(section.GetInt(nameof(ZoomPercent), 100), 70, 250);
             state.AutoFitColumns = section.GetBool(nameof(AutoFitColumns), true);
+            state.ColumnOrder = section.GetString(nameof(ColumnOrder), "");
             state.CheckUpdatesOnStartup = section.GetBool(nameof(CheckUpdatesOnStartup), true);
             state.LastUpdateCheck = section.GetString(nameof(LastUpdateCheck), "");
 
@@ -106,6 +110,7 @@ public sealed class UiState
             if (MuteUntil.Length > 0) section.Set(nameof(MuteUntil), MuteUntil);
             if (ZoomPercent != 100) section.Set(nameof(ZoomPercent), ZoomPercent);
             section.Set(nameof(AutoFitColumns), AutoFitColumns);
+            if (ColumnOrder.Length > 0) section.Set(nameof(ColumnOrder), ColumnOrder);
             section.Set(nameof(CheckUpdatesOnStartup), CheckUpdatesOnStartup);
             if (LastUpdateCheck.Length > 0) section.Set(nameof(LastUpdateCheck), LastUpdateCheck);
             if (LastConfigPath is { Length: > 0 } path) section.Set(nameof(LastConfigPath), path);

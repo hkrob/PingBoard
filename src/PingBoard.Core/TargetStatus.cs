@@ -70,6 +70,44 @@ public enum ProbeKind
     Https,
 }
 
+public static class ProbeKindExtensions
+{
+    /// <summary>
+    /// How a probe kind is written in the config and shown in the Probe column.
+    /// <para>
+    /// One mapping rather than one per caller. The column previously tested "is it TCP" and
+    /// labelled everything else icmp, so every HTTP target reported the wrong probe once those
+    /// kinds existed — a display that quietly disagrees with what the engine is doing.
+    /// </para>
+    /// </summary>
+    public static string Label(this ProbeKind kind) => kind switch
+    {
+        ProbeKind.Tcp => "tcp",
+        ProbeKind.Http => "http",
+        ProbeKind.Https => "https",
+        _ => "icmp",
+    };
+
+    /// <summary>
+    /// The conventional port for this kind, or 0 where there is none — used only to decide when
+    /// printing the port adds nothing.
+    /// <para>
+    /// TCP returns 0 deliberately. Its config default happens to be 443, but that is a starting
+    /// value rather than a convention: a TCP probe is defined by the port it opens, so
+    /// <c>tcp:443</c> is worth stating in a way that <c>https:443</c> is not.
+    /// </para>
+    /// </summary>
+    public static int DefaultPort(this ProbeKind kind) => kind switch
+    {
+        ProbeKind.Http => 80,
+        ProbeKind.Https => 443,
+        _ => 0,
+    };
+
+    /// <summary>True when the port is meaningful — ICMP has none.</summary>
+    public static bool UsesPort(this ProbeKind kind) => kind is not ProbeKind.Icmp;
+}
+
 public static class TargetStatusExtensions
 {
     /// <summary>True when the probe reached the target. Only this counts as OK.</summary>

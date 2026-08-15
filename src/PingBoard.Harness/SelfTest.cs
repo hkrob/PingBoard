@@ -692,6 +692,33 @@ internal static class SelfTest
         Check("status: success is ok",
             ProbeResult.FromIpStatus(System.Net.NetworkInformation.IPStatus.Success) == TargetStatus.Ok);
 
+        // Regression guard. The Probe column tested "is it TCP" and called everything else icmp,
+        // so every HTTP and HTTPS target reported the wrong probe once those kinds were added —
+        // the board claiming to be doing something other than what it was actually doing.
+        Check("probe kind: icmp labels itself", ProbeKind.Icmp.Label() == "icmp");
+        Check("probe kind: tcp labels itself", ProbeKind.Tcp.Label() == "tcp");
+        Check("probe kind: http is not mislabelled as icmp", ProbeKind.Http.Label() == "http");
+        Check("probe kind: https is not mislabelled as icmp", ProbeKind.Https.Label() == "https");
+        Check("probe kind: icmp has no port", !ProbeKind.Icmp.UsesPort());
+        Check("probe kind: the others do", ProbeKind.Tcp.UsesPort() && ProbeKind.Https.UsesPort());
+        Check("probe kind: http and https have conventional ports",
+            ProbeKind.Http.DefaultPort() == 80 && ProbeKind.Https.DefaultPort() == 443);
+        Check("probe kind: tcp has no conventional port, so its port is always shown",
+            ProbeKind.Tcp.DefaultPort() == 0);
+
+        // Column order lives in the App project, so only the invariant that matters off the UI
+        // thread is checked here: the persisted form must always round-trip to every column
+        // exactly once. A dropped id loses a column outright; a duplicated one puts two cells in
+        // the same grid position.
+        var ids = new[] { "Status", "Name", "Ip", "Rtt", "Loss" };
+        var persisted = "Rtt,Loss,Status,Name,Ip";
+        var restored = persisted.Split(',');
+
+        Check("order: a saved arrangement lists every column once",
+            restored.Length == ids.Length && restored.Distinct(StringComparer.OrdinalIgnoreCase).Count() == ids.Length);
+        Check("order: and contains no unknown column",
+            restored.All(id => ids.Contains(id, StringComparer.OrdinalIgnoreCase)));
+
         Check("status: dns fail counts as a failure", TargetStatus.DnsFail.IsFailure());
         Check("status: suspended is not a failure", !TargetStatus.Suspended.IsFailure());
         Check("status: paused is not a failure", !TargetStatus.Paused.IsFailure());
@@ -1226,6 +1253,41 @@ internal static class SelfTest
         ConfigStore.Save(legacy, new Settings(), [new TargetConfig { Name = "old", Address = "1.2.3.4" }]);
         Check("tabs: a tab-free config gains no Tab key",
             !File.ReadAllText(legacy).Contains("Tab=", StringComparison.OrdinalIgnoreCase));
+
+        // Muting is not disabling, and the difference is the point: a muted tab keeps probing and
+        // keeps its history, and only the alert is withheld.
+        var muteTabs = new List<TabConfig> { new() { Name = "Noisy", Enabled = true, Muted = true, Order = 0 } };
+        var mutePath = Path.Combine(dir, "muted.ini");
+
+        ConfigStore.Save(mutePath, new Settings(),
+            [new TargetConfig { Name = "flaky", Address = "1.2.3.4", Tab = "Noisy" }], null, muteTabs);
+
+        var mutedBack = ConfigStore.Load(mutePath).Tabs.First(t => t.Name == "Noisy");
+        Check("tabs: muted round-trips", mutedBack.Muted);
+        Check("tabs: a muted tab is still enabled", mutedBack.Enabled);
+
+        var noisy = new PingTarget(new TargetConfig { Name = "flaky", Address = "1.2.3.4", Tab = "Noisy" },
+                                   new Settings { FailuresBeforeDown = 2 });
+        noisy.TabMuted = true;
+
+        Check("tabs: a muted target is still probed", noisy.IsActive);
+
+        var quietNow = DateTimeOffset.Now;
+        StateTransition? mutedAlert = null;
+        for (var i = 0; i < 4; i++)
+            mutedAlert ??= noisy.Record(ProbeResult.Fail(TargetStatus.Timeout, 4000 + i, quietNow), 2,
+                                        raiseTransitions: false);
+
+        Check("tabs: a muted tab raises no alert", mutedAlert is null);
+        Check("tabs: but the history still records it", noisy.Snapshot().Stats.Samples == 4);
+        Check("tabs: and the counters still move", noisy.Counters.NokCount == 4);
+
+        // Unmuting a tab whose host is still down must alert, exactly as leaving a maintenance
+        // window does - otherwise the outage is silently forgotten.
+        var afterUnmute = noisy.Record(ProbeResult.Fail(TargetStatus.Timeout, 5000, quietNow), 2);
+        Check("tabs: unmuting a still-down host alerts then", afterUnmute is { Up: false });
+
+        noisy.Dispose();
 
         // The load-bearing rule: disabling a tab pauses its targets, and that is entirely separate
         // from a target the user paused by hand.

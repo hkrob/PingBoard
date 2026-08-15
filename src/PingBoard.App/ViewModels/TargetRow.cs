@@ -225,7 +225,13 @@ public sealed partial class TargetRow : ObservableObject
         Avail7d = FormatAvailability(Target.Availability.Percent(24 * 7, asOf));
         Avail30d = FormatAvailability(Target.Availability.Percent(24 * 30, asOf));
 
-        Probe = s.Probe == ProbeKind.Tcp ? $"tcp:{s.Port}" : "icmp";
+        // A switch, not a "is it TCP" test. The original binary check silently reported every
+        // HTTP and HTTPS target as icmp once those kinds were added — the column claimed the
+        // board was doing something other than what it was actually doing, which is worse than
+        // showing nothing. The port is omitted where it is the conventional one for the scheme.
+        Probe = s.Probe.UsesPort() && s.Port != s.Probe.DefaultPort()
+            ? $"{s.Probe.Label()}:{s.Port}"
+            : s.Probe.Label();
 
         // The tooltip carries the raw IPStatus, which distinguishes "nothing answered" from
         // "a router actively told us it could not deliver".

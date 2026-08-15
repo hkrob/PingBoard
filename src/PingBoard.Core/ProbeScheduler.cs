@@ -355,10 +355,13 @@ public sealed class ProbeScheduler : IAsyncDisposable
         // A result that landed while we were going to sleep must not be counted.
         if (_suspended) return;
 
-        // A maintenance window suppresses the alert, never the probe: the board still shows what
-        // happened and the history still records it, so you can see afterwards whether the host
-        // came back when it was supposed to.
-        var quiet = target.InMaintenance(result.When);
+        // A maintenance window or a muted tab suppresses the alert, never the probe: the board
+        // still shows what happened and the history still records it, so you can see afterwards
+        // whether the host came back when it was supposed to.
+        //
+        // Both leave the "already announced" flag clear, so a host still down when the window
+        // closes — or when the tab is unmuted — raises the alert then rather than never.
+        var quiet = target.TabMuted || target.InMaintenance(result.When);
 
         var transition = target.Record(result, target.FailuresBeforeDownFrom(settings), raiseTransitions: !quiet);
         if (transition is not { } t) return;

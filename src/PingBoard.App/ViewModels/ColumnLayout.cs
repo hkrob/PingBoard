@@ -98,6 +98,121 @@ public sealed class ColumnLayout : INotifyPropertyChanged
             : new GridLength(Natural[id] * _zoom);
     }
 
+    // ------------------------------------------------------------------ order
+    //
+    // Column order is data rather than markup. It used to be baked into both templates twice
+    // over: each cell carried a literal Grid.Column, and each ColumnDefinition was "Hostname's
+    // width" only because Hostname happened to be fourth. Rearranging meant editing two files in
+    // lockstep, and getting it wrong drifts the header out of alignment with the rows.
+    //
+    // Now every cell binds Grid.Column to its own index and every ColumnDefinition binds to "the
+    // width of whatever sits at position n", so moving a column is a permutation of one list.
+
+    private readonly List<string> _order = [.. Natural.Keys];
+
+    public IReadOnlyList<string> Order => _order;
+
+    /// <summary>Position of a column, or 0 if it is somehow unknown.</summary>
+    public int IndexOf(string id)
+    {
+        var index = _order.IndexOf(id);
+        return index < 0 ? 0 : index;
+    }
+
+    /// <summary>
+    /// Moves a column by <paramref name="delta"/> positions. Returns false when it did not move,
+    /// so the caller can leave the UI alone.
+    /// </summary>
+    public bool Move(string id, int delta)
+    {
+        var from = _order.IndexOf(id);
+        if (from < 0) return false;
+
+        var to = Math.Clamp(from + delta, 0, _order.Count - 1);
+        if (to == from) return false;
+
+        _order.RemoveAt(from);
+        _order.Insert(to, id);
+        RaiseAll();
+        return true;
+    }
+
+    public void ResetOrder()
+    {
+        _order.Clear();
+        _order.AddRange(Natural.Keys);
+        RaiseAll();
+    }
+
+    /// <summary>
+    /// Round-trips through the UI state file. Unknown ids are dropped and missing ones appended,
+    /// so a config written by an older or newer build still yields every column exactly once
+    /// rather than losing one or listing it twice.
+    /// </summary>
+    public string OrderCsv
+    {
+        get => string.Join(',', _order);
+        set
+        {
+            var restored = new List<string>();
+
+            foreach (var id in value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                if (Natural.ContainsKey(id) && !restored.Contains(id))
+                    restored.Add(id);
+
+            foreach (var id in Natural.Keys)
+                if (!restored.Contains(id))
+                    restored.Add(id);
+
+            _order.Clear();
+            _order.AddRange(restored);
+            RaiseAll();
+        }
+    }
+
+    private GridLength WidthAt(int position) =>
+        position < _order.Count ? Width(_order[position]) : new GridLength(0);
+
+    // Width of whatever column currently sits at each position.
+    public GridLength Pos0 => WidthAt(0);
+    public GridLength Pos1 => WidthAt(1);
+    public GridLength Pos2 => WidthAt(2);
+    public GridLength Pos3 => WidthAt(3);
+    public GridLength Pos4 => WidthAt(4);
+    public GridLength Pos5 => WidthAt(5);
+    public GridLength Pos6 => WidthAt(6);
+    public GridLength Pos7 => WidthAt(7);
+    public GridLength Pos8 => WidthAt(8);
+    public GridLength Pos9 => WidthAt(9);
+    public GridLength Pos10 => WidthAt(10);
+    public GridLength Pos11 => WidthAt(11);
+    public GridLength Pos12 => WidthAt(12);
+    public GridLength Pos13 => WidthAt(13);
+    public GridLength Pos14 => WidthAt(14);
+    public GridLength Pos15 => WidthAt(15);
+    public GridLength Pos16 => WidthAt(16);
+    public GridLength Pos17 => WidthAt(17);
+
+    // Where each column currently sits.
+    public int IdxStatus => IndexOf(nameof(Status));
+    public int IdxName => IndexOf(nameof(Name));
+    public int IdxIp => IndexOf(nameof(Ip));
+    public int IdxHostname => IndexOf(nameof(Hostname));
+    public int IdxLastOk => IndexOf(nameof(LastOk));
+    public int IdxLastNok => IndexOf(nameof(LastNok));
+    public int IdxCumulative => IndexOf(nameof(Cumulative));
+    public int IdxRtt => IndexOf(nameof(Rtt));
+    public int IdxAvgMinMax => IndexOf(nameof(AvgMinMax));
+    public int IdxLoss => IndexOf(nameof(Loss));
+    public int IdxJitter => IndexOf(nameof(Jitter));
+    public int IdxFails => IndexOf(nameof(Fails));
+    public int IdxSpark => IndexOf(nameof(Spark));
+    public int IdxUptime => IndexOf(nameof(Uptime));
+    public int IdxProbe => IndexOf(nameof(Probe));
+    public int IdxAvail24h => IndexOf(nameof(Avail24h));
+    public int IdxAvail7d => IndexOf(nameof(Avail7d));
+    public int IdxAvail30d => IndexOf(nameof(Avail30d));
+
     // ------------------------------------------------------------------ auto-fit
     //
     // Widths measured from what is actually on the board, rather than the fixed guesses above.
@@ -267,7 +382,17 @@ public sealed class ColumnLayout : INotifyPropertyChanged
     /// </summary>
     private void RaiseAll()
     {
-        foreach (var id in Natural.Keys) Raise(id);
+        foreach (var id in Natural.Keys)
+        {
+            Raise(id);
+
+            // Where the column sits, for the cells that bind Grid.Column to it.
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs("Idx" + id));
+        }
+
+        // And the width of each position, for the ColumnDefinitions.
+        for (var position = 0; position < Natural.Count; position++)
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs("Pos" + position));
 
         foreach (var name in new[]
                  {

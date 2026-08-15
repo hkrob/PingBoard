@@ -109,6 +109,7 @@ public static class ConfigStore
             {
                 Name = name,
                 Enabled = section.GetBool(nameof(TabConfig.Enabled), true),
+                Muted = section.GetBool(nameof(TabConfig.Muted), false),
                 Order = section.GetInt(nameof(TabConfig.Order), order++),
             });
         }
@@ -220,6 +221,7 @@ public static class ConfigStore
         {
             var section = ini.GetOrAdd(TabPrefix + tab.Name);
             section.Set(nameof(TabConfig.Enabled), tab.Enabled);
+            section.Set(nameof(TabConfig.Muted), tab.Muted);
             section.Set(nameof(TabConfig.Order), order++);
         }
     }

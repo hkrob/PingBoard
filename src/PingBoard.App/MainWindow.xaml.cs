@@ -54,6 +54,15 @@ public sealed partial class MainWindow : Window
             _uiState.Save();
         };
 
+        // Before AutoFit, so the first fit measures the arrangement the user actually left.
+        if (_uiState.ColumnOrder.Length > 0) ColumnLayout.Instance.OrderCsv = _uiState.ColumnOrder;
+
+        _board.ColumnOrderChanged += order =>
+        {
+            _uiState.ColumnOrder = order;
+            _uiState.Save();
+        };
+
         ColumnLayout.Instance.Zoom = _uiState.ZoomPercent / 100.0;
         ColumnLayout.Instance.AutoFit = _uiState.AutoFitColumns;
         _board.SetAutoFitChecked(_uiState.AutoFitColumns);

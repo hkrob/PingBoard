@@ -8,7 +8,7 @@
 ; Output lands in installer\output\PingBoard-<version>-setup.exe.
 
 #define AppName        "PingBoard"
-#define AppVersion     "1.9.0"
+#define AppVersion     "1.10.0"
 #define AppPublisher   "hkrob"
 #define AppExeName     "PingBoard.App.exe"
 #define AppUrl         "https://github.com/hkrob/PingBoard"
@@ -31,6 +31,15 @@ PrivilegesRequiredOverridesAllowed=dialog
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
+
+; Upgrades reuse whatever the previous install chose, rather than asking again. Both default to
+; yes; stated explicitly because the whole point of the [Code] section below is that a re-run
+; should behave as an update, and that only holds if these do.
+UsePreviousAppDir=yes
+UsePreviousTasks=yes
+
+; Skipped on an upgrade only - see ShouldSkipPage. A first install still gets to confirm.
+DisableReadyPage=no
 
 ; The payload is ~220 MB of self-contained .NET and Windows App SDK runtime. LZMA2/max roughly
 ; halves it, at the cost of a slower compile — worth it for something people download.
@@ -86,6 +95,50 @@ Filename: "{app}\{#AppExeName}"; Description: "Launch {#AppName}"; Flags: nowait
 Type: filesandordirs; Name: "{app}"
 
 [Code]
+
+{ Inno records its own uninstall entry under this key. Reading it back is how we tell an upgrade
+  from a first install - there is no built-in "is this an update" flag. HKCU first because this is
+  a per-user install; HKLM as a fallback in case someone once elevated through the
+  PrivilegesRequiredOverridesAllowed dialog. }
+
+const
+  UninstallKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{8F2B9C41-7D3E-4A56-9B18-2E7C5D0A4F63}_is1';
+
+function InstalledVersion(): String;
+begin
+  Result := '';
+  if not RegQueryStringValue(HKCU, UninstallKey, 'DisplayVersion', Result) then
+    if not RegQueryStringValue(HKLM, UninstallKey, 'DisplayVersion', Result) then
+      Result := '';
+end;
+
+function IsUpgrade(): Boolean;
+begin
+  Result := InstalledVersion() <> '';
+end;
+
+{ An upgrade should not re-ask questions that were answered the last time. UsePreviousTasks already
+  carries the answers forward, so showing the page again only invites the user to change something
+  by accident - and makes a routine update look like a fresh install, which is exactly the
+  confusion this removes. A first install still sees every page. }
+
+function ShouldSkipPage(PageID: Integer): Boolean;
+begin
+  Result := IsUpgrade() and ((PageID = wpSelectTasks) or (PageID = wpReady));
+end;
+
+procedure InitializeWizard();
+begin
+  if IsUpgrade() then
+  begin
+    WizardForm.Caption := 'Update {#AppName} to {#AppVersion}';
+    WizardForm.WelcomeLabel1.Caption := 'Updating {#AppName}';
+    WizardForm.WelcomeLabel2.Caption :=
+      'Version ' + InstalledVersion() + ' is installed. This will replace it with {#AppVersion}.' + #13#10 + #13#10 +
+      'Your targets, statistics and settings are kept - they live in %AppData%\{#AppName}, which Setup does not touch.';
+  end;
+end;
+
 { The app hides to the tray rather than exiting, so an upgrade will usually find the previous
   version still running and holding its files open. Close it first — silently, since the user
   already agreed to install. User data in %AppData%\PingBoard is deliberately left alone. }

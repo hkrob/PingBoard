@@ -317,6 +317,27 @@ public sealed partial class BoardView : UserControl
     private void OnToggleUpdateCheck(object sender, RoutedEventArgs e) =>
         UpdateCheckChanged?.Invoke(CheckUpdatesOnStartup.IsChecked);
 
+    /// <summary>Raised when the column order changes, so the window can persist it.</summary>
+    public event Action<string>? ColumnOrderChanged;
+
+    private async void OnArrangeColumns(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            await ArrangeColumnsDialog.ShowAsync(XamlRoot, () =>
+            {
+                // Widths were fitted to the old arrangement; refit so a column that moved next to
+                // a wider neighbour is not left at the wrong size until the next throttled pass.
+                Vm.FitColumnsNow();
+                ColumnOrderChanged?.Invoke(ColumnLayout.Instance.OrderCsv);
+            });
+        }
+        catch (Exception ex)
+        {
+            CrashLog.Write(ex);
+        }
+    }
+
     private void OnToggleAutoFit(object sender, RoutedEventArgs e)
     {
         ColumnLayout.Instance.AutoFit = AutoFitColumns.IsChecked;
@@ -427,6 +448,18 @@ public sealed partial class BoardView : UserControl
 
     private void OnEnableTab(object sender, RoutedEventArgs e) => SetTabEnabled(sender, true);
     private void OnDisableTab(object sender, RoutedEventArgs e) => SetTabEnabled(sender, false);
+
+    private void OnMuteTab(object sender, RoutedEventArgs e) => SetTabMuted(sender, true);
+    private void OnUnmuteTab(object sender, RoutedEventArgs e) => SetTabMuted(sender, false);
+
+    /// <summary>
+    /// Muting a tab keeps it running and only withholds the alerts, which is the difference
+    /// between it and disabling: that stops the probes and loses the record.
+    /// </summary>
+    private void SetTabMuted(object sender, bool muted)
+    {
+        if (sender is FrameworkElement { DataContext: TabItem tab }) Vm.SetTabMuted(tab, muted);
+    }
 
     /// <summary>
     /// Switching a tab off pauses every target in it. Note that this is the <em>only</em> thing a

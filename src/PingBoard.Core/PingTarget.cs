@@ -165,6 +165,12 @@ public sealed class PingTarget : IDisposable
     /// </summary>
     public bool TabEnabled { get; set; } = true;
 
+    /// <summary>
+    /// True when this target's tab is muted. Probing and recording continue exactly as normal;
+    /// only the notification is withheld — the same contract as a maintenance window.
+    /// </summary>
+    public bool TabMuted { get; set; }
+
     /// <summary>Probed only when both the target and its tab are enabled.</summary>
     public bool IsActive => Config.Enabled && TabEnabled;
 

@@ -406,7 +406,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
         Tabs.Clear();
         foreach (var tab in _tabs)
-            Tabs.Add(new TabItem(tab.Name) { IsEnabled = tab.Enabled });
+            Tabs.Add(new TabItem(tab.Name) { IsEnabled = tab.Enabled, IsMuted = tab.Muted });
 
         if (!_tabs.Any(t => string.Equals(t.Name, _selectedTab, StringComparison.OrdinalIgnoreCase)))
             _selectedTab = _tabs[0].Name;
@@ -426,7 +426,9 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         {
             var name = TabConfig.Normalise(row.Target.Config.Tab);
             var tab = _tabs.Find(t => string.Equals(t.Name, name, StringComparison.OrdinalIgnoreCase));
+
             row.Target.TabEnabled = tab?.Enabled ?? true;
+            row.Target.TabMuted = tab?.Muted ?? false;
         }
     }
 
@@ -493,6 +495,25 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
         var config = _tabs.Find(t => string.Equals(t.Name, tab.Name, StringComparison.OrdinalIgnoreCase));
         if (config is not null) config.Enabled = enabled;
+
+        ApplyTabStateToTargets();
+        SaveConfig();
+    }
+
+    /// <summary>
+    /// Silences a group's alerts while it carries on being probed, and persists the choice.
+    /// <para>
+    /// Deliberately not the same as disabling it. Muting keeps the data, the history and the
+    /// statistics and withholds only the interruption; switching the tab off would stop the probes
+    /// and throw away the record of what those hosts did while you were not being told.
+    /// </para>
+    /// </summary>
+    public void SetTabMuted(TabItem tab, bool muted)
+    {
+        tab.IsMuted = muted;
+
+        var config = _tabs.Find(t => string.Equals(t.Name, tab.Name, StringComparison.OrdinalIgnoreCase));
+        if (config is not null) config.Muted = muted;
 
         ApplyTabStateToTargets();
         SaveConfig();
