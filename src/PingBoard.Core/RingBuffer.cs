@@ -55,43 +55,65 @@ public sealed class RingBuffer
     /// </summary>
     public RollingStats Stats()
     {
-        lock (_gate)
+        lock (_gate) return StatsLocked(_count);
+    }
+
+    /// <summary>
+    /// The same statistics over only the most recent <paramref name="n"/> samples.
+    /// <para>
+    /// Exists for the degraded assessment, which needs a window short enough to react inside a
+    /// minute. The full rolling window is the right span for figures you read and much too slow
+    /// for a state you watch.
+    /// </para>
+    /// </summary>
+    public RollingStats RecentStats(int n)
+    {
+        lock (_gate) return StatsLocked(Math.Min(Math.Max(n, 0), _count));
+    }
+
+    /// <summary>
+    /// Computes every statistic over the newest <paramref name="take"/> samples in a single pass
+    /// under one lock, rather than exposing the buffer and letting callers walk it repeatedly.
+    /// </summary>
+    private RollingStats StatsLocked(int take)
+    {
+        // Chronological offset of the first sample in the window, shared with Jitter below.
+        var first = _count - take;
+
+        if (take == 0) return RollingStats.Empty;
+
+        int ok = 0, counted = 0, min = int.MaxValue, max = 0;
+        long sum = 0;
+
+        for (var i = 0; i < take; i++)
         {
-            if (_count == 0) return RollingStats.Empty;
+            ref readonly var r = ref _items[Index(first + i)];
 
-            int ok = 0, counted = 0, min = int.MaxValue, max = 0;
-            long sum = 0;
+            // Paused/Suspended samples are not evidence about the target and must not
+            // pollute the loss percentage.
+            if (r.Status.IsInactive()) continue;
+            counted++;
 
-            for (var i = 0; i < _count; i++)
-            {
-                ref readonly var r = ref _items[i];
+            if (!r.Status.IsOk()) continue;
+            ok++;
 
-                // Paused/Suspended samples are not evidence about the target and must not
-                // pollute the loss percentage.
-                if (r.Status.IsInactive()) continue;
-                counted++;
-
-                if (!r.Status.IsOk()) continue;
-                ok++;
-
-                if (!r.HasRtt) continue;
-                sum += r.RttMs;
-                if (r.RttMs < min) min = r.RttMs;
-                if (r.RttMs > max) max = r.RttMs;
-            }
-
-            if (counted == 0) return RollingStats.Empty;
-
-            var avg = ok > 0 ? (double)sum / ok : 0d;
-            return new RollingStats(
-                Samples: counted,
-                OkSamples: ok,
-                LossPercent: 100d * (counted - ok) / counted,
-                MinMs: min == int.MaxValue ? 0 : min,
-                MaxMs: max,
-                AvgMs: avg,
-                JitterMs: Jitter());
+            if (!r.HasRtt) continue;
+            sum += r.RttMs;
+            if (r.RttMs < min) min = r.RttMs;
+            if (r.RttMs > max) max = r.RttMs;
         }
+
+        if (counted == 0) return RollingStats.Empty;
+
+        var avg = ok > 0 ? (double)sum / ok : 0d;
+        return new RollingStats(
+            Samples: counted,
+            OkSamples: ok,
+            LossPercent: 100d * (counted - ok) / counted,
+            MinMs: min == int.MaxValue ? 0 : min,
+            MaxMs: max,
+            AvgMs: avg,
+            JitterMs: Jitter());
 
         // Mean absolute successive difference across consecutive replies — a better feel for
         // link quality than standard deviation, and cheap to compute.
@@ -101,9 +123,9 @@ public sealed class RingBuffer
             var pairs = 0;
             var prev = -1;
 
-            for (var i = 0; i < _count; i++)
+            for (var i = 0; i < take; i++)
             {
-                ref readonly var r = ref _items[Index(i)];
+                ref readonly var r = ref _items[Index(first + i)];
                 if (!r.Status.IsOk() || !r.HasRtt) { prev = -1; continue; }
                 if (prev >= 0) { total += Math.Abs(r.RttMs - prev); pairs++; }
                 prev = r.RttMs;

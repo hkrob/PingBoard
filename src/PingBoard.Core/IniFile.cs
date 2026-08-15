@@ -207,7 +207,20 @@ public sealed class IniSection(string name)
     public void Set(string key, long value) => Set(key, value.ToString(CultureInfo.InvariantCulture));
     public void Set(string key, bool value) => Set(key, value ? "true" : "false");
 
+    /// <summary>
+    /// Written with "0.##" rather than the round-trip form, so a threshold of five is written as
+    /// <c>5</c> and not <c>5</c> in some cultures and <c>5,0</c> in others. Invariant throughout:
+    /// this file is read by the program, not by a locale.
+    /// </summary>
+    public void Set(string key, double value) =>
+        Set(key, value.ToString("0.##", CultureInfo.InvariantCulture));
+
     public void SetOptional(string key, int? value)
+    {
+        if (value is { } v) Set(key, v);
+    }
+
+    public void SetOptional(string key, double? value)
     {
         if (value is { } v) Set(key, v);
     }
@@ -228,6 +241,12 @@ public sealed class IniSection(string name)
 
     public int? GetIntOrNull(string key) =>
         int.TryParse(Get(key), NumberStyles.Integer, CultureInfo.InvariantCulture, out var v) ? v : null;
+
+    public double GetDouble(string key, double fallback) =>
+        double.TryParse(Get(key), NumberStyles.Float, CultureInfo.InvariantCulture, out var v) ? v : fallback;
+
+    public double? GetDoubleOrNull(string key) =>
+        double.TryParse(Get(key), NumberStyles.Float, CultureInfo.InvariantCulture, out var v) ? v : null;
 
     public bool GetBool(string key, bool fallback) => Get(key)?.Trim().ToLowerInvariant() switch
     {

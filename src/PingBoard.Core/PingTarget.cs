@@ -43,6 +43,19 @@ public sealed class TargetConfig
     public int? Ttl { get; set; }
 
     /// <summary>
+    /// Average round-trip time above which this target is shown as degraded, or null to inherit.
+    /// <para>
+    /// This is the override that matters most of the whole set, because the global default is off
+    /// and has to be: "too slow" is a statement about one link. Sixty milliseconds is a broken LAN
+    /// and a very good path to Frankfurt.
+    /// </para>
+    /// </summary>
+    public int? DegradedLatencyMs { get; set; }
+
+    /// <summary>Loss percentage above which this target is shown as degraded, or null to inherit.</summary>
+    public double? DegradedLossPercent { get; set; }
+
+    /// <summary>
     /// Consecutive failures before this target is declared down. Overrides the global setting.
     /// <para>
     /// Worth having per target because the number only means anything relative to that target's
@@ -91,7 +104,8 @@ public readonly record struct TargetSnapshot(
     long NokCount,
     int ConsecutiveFailures,
     RollingStats Stats,
-    TimeSpan? DownFor);
+    TimeSpan? DownFor,
+    CertificateInfo? Certificate = null);
 
 /// <summary>
 /// One monitored host: its configuration, its live probe state, and its history ring.
@@ -124,8 +138,29 @@ public sealed class PingTarget : IDisposable
     /// would fire, yet the recovery one still would.
     /// </summary>
     private bool _downFired;
+
+    /// <summary>
+    /// Mirrors <see cref="_downFired"/> for the soft state: set once on entering degraded so the
+    /// notification fires on the crossing rather than on every slow probe thereafter.
+    /// </summary>
+    private bool _degradedFired;
+
+    private long? _degradedSinceTick;
     private IPAddress? _resolved;
     private string? _reverseName;
+
+    /// <summary>Last TLS certificate seen for an HTTPS target.</summary>
+    private CertificateInfo? _certificate;
+
+    /// <summary>
+    /// Monotonic tick at which the certificate may be read again; null means "now". Stored as the
+    /// next due time rather than the last check so a failed read can ask to be retried sooner
+    /// without the scheduler having to remember anything about it.
+    /// </summary>
+    private long? _certNextTick;
+
+    /// <summary>Set once the expiry warning has been raised, so it fires on the crossing only.</summary>
+    private bool _certWarned;
 
     /// <summary>Most recent path trace, captured when this target was last declared down.</summary>
     private TraceResult? _lastTrace;
@@ -232,6 +267,80 @@ public sealed class PingTarget : IDisposable
 
     public int IntervalFrom(Settings s) => Config.IntervalMs ?? s.IntervalMs;
 
+    /// <summary>Effective degraded thresholds: per-target overrides, else the global defaults.</summary>
+    public DegradeThresholds ThresholdsFrom(Settings s) => new(
+        Config.DegradedLatencyMs ?? s.DegradedLatencyMs,
+        Config.DegradedLossPercent ?? s.DegradedLossPercent,
+        s.DegradedSamples);
+
+    /// <summary>
+    /// The certificate last read from this target, or null if it is not an HTTPS target or has not
+    /// been read yet.
+    /// </summary>
+    public CertificateInfo? Certificate
+    {
+        get { lock (_gate) return _certificate; }
+    }
+
+    /// <summary>
+    /// Claims the right to read this target's certificate now, deferring the next read by
+    /// <paramref name="everyHours"/>.
+    /// <para>
+    /// The slot is claimed up front rather than on completion, which is what stops the scheduler —
+    /// which asks four times a second — from launching a second handshake while the first is still
+    /// running.
+    /// </para>
+    /// </summary>
+    public bool TryBeginCertCheck(int everyHours)
+    {
+        if (Config.Probe != ProbeKind.Https) return false;
+
+        lock (_gate)
+        {
+            var now = Environment.TickCount64;
+            if (_certNextTick is { } due && now < due) return false;
+            _certNextTick = now + (long)everyHours * 3_600_000;
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Stores a certificate reading, and reports the first crossing into "expiring soon".
+    /// </summary>
+    /// <param name="retryMinutes">
+    /// When positive, overrides the next due time — used after a failed read so a host that
+    /// happened to be down at startup is retried in minutes rather than in hours.
+    /// </param>
+    /// <returns>A transition the first time expiry is within <paramref name="warnDays"/>, else null.</returns>
+    public StateTransition? SetCertificate(CertificateInfo info, int warnDays, int retryMinutes = 0)
+    {
+        lock (_gate)
+        {
+            _certificate = info;
+
+            if (retryMinutes > 0)
+                _certNextTick = Environment.TickCount64 + (long)retryMinutes * 60_000;
+
+            if (!info.HasCertificate) return null;
+
+            if (!info.IsExpiring(info.CheckedAt, warnDays))
+            {
+                // Renewed. Re-arm so the next approach to expiry is announced too.
+                _certWarned = false;
+                return null;
+            }
+
+            if (_certWarned) return null;
+            _certWarned = true;
+
+            // DownFor carries time remaining rather than time elapsed for this kind — negative
+            // once the certificate has already expired.
+            return new StateTransition(
+                Config.Name, Up: false, info.CheckedAt, info.NotAfter - info.CheckedAt,
+                TargetStatus.Degraded, warnDays, TransitionKind.Certificate);
+        }
+    }
+
     /// <summary>Effective alert threshold: the per-target override, else the global setting.</summary>
     public int FailuresBeforeDownFrom(Settings s) => Config.FailuresBeforeDown ?? s.FailuresBeforeDown;
 
@@ -254,7 +363,15 @@ public sealed class PingTarget : IDisposable
     /// closes raises the alert — quiet while you expected the outage, loud the moment you did not.
     /// </para>
     /// </param>
-    public StateTransition? Record(in ProbeResult result, int failuresBeforeDown, bool raiseTransitions = true)
+    /// <param name="thresholds">
+    /// Latency and loss limits for the degraded state. Defaults to <c>default</c>, which is off —
+    /// so every existing caller keeps the exact behaviour it had before the state existed.
+    /// </param>
+    public StateTransition? Record(
+        in ProbeResult result,
+        int failuresBeforeDown,
+        bool raiseTransitions = true,
+        DegradeThresholds thresholds = default)
     {
         lock (_gate)
         {
@@ -274,13 +391,19 @@ public sealed class PingTarget : IDisposable
                 _consecutiveFailures = 0;
                 _downFired = false;
 
-                if (!wasDown || !raiseTransitions) { _downSinceTick = null; return null; }
+                // Assessed before the recovery return, so a host that comes back slow reads amber
+                // from that first reply rather than green until the probe after it.
+                var soft = EvaluateDegradedLocked(result, thresholds, raiseTransitions);
+
+                if (!wasDown || !raiseTransitions) { _downSinceTick = null; return soft; }
 
                 var downFor = _downSinceTick is { } since
                     ? TimeSpan.FromMilliseconds(result.TickMs - since)
                     : TimeSpan.Zero;
                 _downSinceTick = null;
 
+                // The hard transition wins when a probe produces both. "It came back" is the
+                // headline; "and it is slow" is on the board and in the log either way.
                 return new StateTransition(
                     Config.Name, Up: true, result.When, downFor, result.Status, failuresBeforeDown);
             }
@@ -298,14 +421,84 @@ public sealed class PingTarget : IDisposable
                 if (raiseTransitions && !_downFired && _consecutiveFailures >= failuresBeforeDown)
                 {
                     _downFired = true;
+
+                    // A target that has gone hard down is no longer merely degraded, and the next
+                    // recovery should be free to announce degradation afresh.
+                    _degradedFired = false;
+                    _degradedSinceTick = null;
+
                     return new StateTransition(
                         Config.Name, Up: false, result.When, TimeSpan.Zero, result.Status, failuresBeforeDown);
                 }
+
+                // Note what does not happen on an ordinary failed probe: the degraded latch is
+                // left exactly as it was. Clearing it would mean an intermittently dropping link
+                // re-announced its degradation on every recovery, which is the noisiest possible
+                // reading of a target that never actually changed condition.
             }
 
             return null;
         }
     }
+
+    /// <summary>
+    /// Decides whether this target is currently degraded, updates the displayed status, and
+    /// returns a soft transition on the crossing in either direction.
+    /// <para>
+    /// The sample itself stays <see cref="TargetStatus.Ok"/> in history and in the availability
+    /// buckets — degradation is a property of the recent window, not of one probe, and writing it
+    /// into the record would make it impossible to say afterwards what the actual reply was.
+    /// </para>
+    /// </summary>
+    private StateTransition? EvaluateDegradedLocked(
+        in ProbeResult result, DegradeThresholds thresholds, bool raiseTransitions)
+    {
+        if (thresholds.IsOff)
+        {
+            _degradedSinceTick = null;
+            _degradedFired = false;
+            return null;
+        }
+
+        var window = _history.RecentStats(thresholds.Samples);
+
+        // Refuse to judge on too little evidence. Without this a single slow first reply after a
+        // restart would turn the whole board amber.
+        if (window.Samples < Math.Min(MinDegradeSamples, thresholds.Samples)) return null;
+
+        var breached = (thresholds.LatencyMs > 0 && window.AvgMs > thresholds.LatencyMs)
+                    || (thresholds.LossPercent > 0 && window.LossPercent > thresholds.LossPercent);
+
+        if (breached)
+        {
+            _status = TargetStatus.Degraded;
+            _degradedSinceTick ??= result.TickMs;
+
+            if (_degradedFired || !raiseTransitions) return null;
+            _degradedFired = true;
+
+            return new StateTransition(
+                Config.Name, Up: false, result.When, TimeSpan.Zero,
+                TargetStatus.Degraded, 0, TransitionKind.Degraded);
+        }
+
+        if (!_degradedFired) { _degradedSinceTick = null; return null; }
+
+        var lasted = _degradedSinceTick is { } since
+            ? TimeSpan.FromMilliseconds(result.TickMs - since)
+            : TimeSpan.Zero;
+
+        _degradedSinceTick = null;
+        _degradedFired = false;
+
+        return raiseTransitions
+            ? new StateTransition(
+                Config.Name, Up: true, result.When, lasted, TargetStatus.Ok, 0, TransitionKind.Degraded)
+            : null;
+    }
+
+    /// <summary>Minimum samples in the window before the degraded state may be entered at all.</summary>
+    private const int MinDegradeSamples = 5;
 
     /// <summary>
     /// Forces a status without touching counters or history. Used for Paused, and for Suspended
@@ -322,6 +515,8 @@ public sealed class PingTarget : IDisposable
                 _consecutiveFailures = 0;
                 _downSinceTick = null;
                 _downFired = false;
+                _degradedSinceTick = null;
+                _degradedFired = false;
             }
         }
     }
@@ -339,6 +534,8 @@ public sealed class PingTarget : IDisposable
             _consecutiveFailures = 0;
             _downSinceTick = null;
             _downFired = false;
+            _degradedSinceTick = null;
+            _degradedFired = false;
         }
     }
 
@@ -370,6 +567,8 @@ public sealed class PingTarget : IDisposable
                 _consecutiveFailures = 0;
                 _downSinceTick = null;
                 _downFired = false;
+                _degradedSinceTick = null;
+                _degradedFired = false;
             }
             else if (_status == TargetStatus.Paused) _status = TargetStatus.Unknown;
         }
@@ -431,7 +630,8 @@ public sealed class PingTarget : IDisposable
                 Counters.NokCount,
                 _consecutiveFailures,
                 _history.Stats(),
-                downFor);
+                downFor,
+                _certificate);
         }
     }
 
@@ -445,10 +645,47 @@ public sealed class PingTarget : IDisposable
 /// transition rather than read back from global settings, because a target may override it — the
 /// notification would otherwise quote a number that was never applied to this host.
 /// </param>
+/// <param name="Kind">
+/// Whether this is a real up/down transition or a soft one. Defaulted so that every call site
+/// written before soft transitions existed still means exactly what it did then.
+/// </param>
 public readonly record struct StateTransition(
     string TargetName,
     bool Up,
     DateTimeOffset When,
     TimeSpan DownFor,
     TargetStatus Status,
-    int Threshold);
+    int Threshold,
+    TransitionKind Kind = TransitionKind.Hard);
+
+/// <summary>What sort of change a <see cref="StateTransition"/> describes.</summary>
+public enum TransitionKind
+{
+    /// <summary>The target went down, or came back. The only kind that is an outage.</summary>
+    Hard = 0,
+
+    /// <summary>
+    /// The target crossed a latency or loss threshold while still replying. <c>Up: false</c> means
+    /// it became degraded; <c>Up: true</c> means it stopped being.
+    /// </summary>
+    Degraded,
+
+    /// <summary>
+    /// A TLS certificate is near expiry or already expired. <see cref="StateTransition.DownFor"/>
+    /// carries the time remaining rather than a duration already elapsed — negative once expired.
+    /// </summary>
+    Certificate,
+}
+
+/// <summary>
+/// Latency and loss limits that define the degraded state for one target, already resolved from
+/// per-target overrides and global defaults.
+/// </summary>
+/// <param name="LatencyMs">Average round-trip ceiling, or 0 for no latency limit.</param>
+/// <param name="LossPercent">Loss ceiling, or 0 for no loss limit.</param>
+/// <param name="Samples">How many recent probes to average over.</param>
+public readonly record struct DegradeThresholds(int LatencyMs, double LossPercent, int Samples)
+{
+    /// <summary>True when neither limit is set, which is the default and disables the state.</summary>
+    public bool IsOff => LatencyMs <= 0 && LossPercent <= 0;
+}

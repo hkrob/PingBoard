@@ -45,6 +45,22 @@ public enum TargetStatus
     /// suppressed while in this state.
     /// </summary>
     Suspended,
+
+    /// <summary>
+    /// The probe succeeded, but latency or loss is past the configured threshold.
+    /// <para>
+    /// This is an <em>up</em> state and <see cref="TargetStatusExtensions.IsOk"/> says so, which is
+    /// the whole design. A degraded target replied: its counters, its availability figures and its
+    /// recovery from a real outage must all behave exactly as they did before this state existed.
+    /// The only thing that differs is what the board shows and what the log records.
+    /// </para>
+    /// <para>
+    /// Appended last rather than slotted next to <see cref="Ok"/> on purpose — the numeric values
+    /// are written into the persisted history sidecar, so renumbering would silently reinterpret
+    /// every sample from a previous run.
+    /// </para>
+    /// </summary>
+    Degraded,
 }
 
 /// <summary>How a target is probed.</summary>
@@ -110,8 +126,21 @@ public static class ProbeKindExtensions
 
 public static class TargetStatusExtensions
 {
-    /// <summary>True when the probe reached the target. Only this counts as OK.</summary>
-    public static bool IsOk(this TargetStatus s) => s == TargetStatus.Ok;
+    /// <summary>
+    /// True when the probe reached the target.
+    /// <para>
+    /// <see cref="TargetStatus.Degraded"/> counts. It means the reply arrived and was slow, not
+    /// that it failed, and every consumer of this predicate — the OK counter, the availability
+    /// buckets, the rolling loss percentage, the recovery branch in
+    /// <see cref="PingTarget.Record"/> — wants "did we get an answer", not "were we happy with
+    /// it". Excluding it here would quietly recategorise a slow link as an outage and destroy the
+    /// availability figures the degraded state exists to give context to.
+    /// </para>
+    /// </summary>
+    public static bool IsOk(this TargetStatus s) => s is TargetStatus.Ok or TargetStatus.Degraded;
+
+    /// <summary>True only for a reply that was also within its latency and loss thresholds.</summary>
+    public static bool IsHealthy(this TargetStatus s) => s == TargetStatus.Ok;
 
     /// <summary>
     /// True when this outcome represents a real failure of the target and should increment the
@@ -140,6 +169,7 @@ public static class TargetStatusExtensions
         TargetStatus.HttpError => "HTTP ERR",
         TargetStatus.Paused => "PAUSED",
         TargetStatus.Suspended => "SUSPENDED",
+        TargetStatus.Degraded => "DEGRADED",
         _ => "—",
     };
 
@@ -147,7 +177,22 @@ public static class TargetStatusExtensions
     /// Segoe Fluent Icons glyph. Paired with <see cref="Label"/> and colour so status is never
     /// conveyed by colour alone.
     /// </summary>
-    public static string Glyph(this TargetStatus s) => s switch
+    public static string Glyph(this TargetStatus s) =>
+        s == TargetStatus.Degraded ? DegradedGlyph : GlyphCore(s);
+
+    /// <summary>
+    /// Stopwatch (U+E916), built from its codepoint rather than written as a literal.
+    /// <para>
+    /// Every glyph here lives in the Unicode Private Use Area, and PUA characters do not reliably
+    /// survive being copied through tooling — they arrive as empty strings, which compiles happily
+    /// and renders as a blank column. Constructing this one from its number means it cannot be
+    /// lost in transit. The literals below predate that discovery and are left alone precisely so
+    /// nothing rewrites them.
+    /// </para>
+    /// </summary>
+    private static readonly string DegradedGlyph = ((char)0xE916).ToString();
+
+    private static string GlyphCore(TargetStatus s) => s switch
     {
         TargetStatus.Ok => "",          // CheckMark
         TargetStatus.Timeout => "",     // Warning

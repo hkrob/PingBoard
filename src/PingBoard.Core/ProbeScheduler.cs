@@ -259,6 +259,12 @@ public sealed class ProbeScheduler : IAsyncDisposable
                         continue;
                     }
 
+                    // Independent of the probe schedule: a certificate is read every few hours, so
+                    // it must not wait on a probe slot and must not be skipped when one is
+                    // unavailable.
+                    if (target.TryBeginCertCheck(_settings.CertCheckHours))
+                        _ = CheckCertificateAsync(target, _settings);
+
                     if (now < target.NextDueTick) continue;
 
                     // Skip rather than stack when the previous probe is still outstanding.
@@ -363,14 +369,22 @@ public sealed class ProbeScheduler : IAsyncDisposable
         // closes — or when the tab is unmuted — raises the alert then rather than never.
         var quiet = target.TabMuted || target.InMaintenance(result.When);
 
-        var transition = target.Record(result, target.FailuresBeforeDownFrom(settings), raiseTransitions: !quiet);
+        var transition = target.Record(
+            result,
+            target.FailuresBeforeDownFrom(settings),
+            raiseTransitions: !quiet,
+            thresholds: target.ThresholdsFrom(settings));
+
         if (transition is not { } t) return;
 
         Transition?.Invoke(t);
 
-        // Down only. Tracing a recovery would describe a path that is working again, which is the
-        // question nobody is asking.
-        if (!t.Up && settings.TraceOnFailure) _ = TraceFailureAsync(target, settings);
+        // Real outages only, and down only. A recovery would trace a path that is working again,
+        // and a target that merely became slow is still answering — tracing it would add ICMP to a
+        // link already showing strain, to describe a route that is by definition still carrying
+        // traffic.
+        if (!t.Up && t.Kind == TransitionKind.Hard && settings.TraceOnFailure)
+            _ = TraceFailureAsync(target, settings);
     }
 
     /// <summary>
@@ -445,6 +459,64 @@ public sealed class ProbeScheduler : IAsyncDisposable
             _traceSlots.Release();
         }
     }
+
+    /// <summary>
+    /// Reads one target's TLS certificate, well away from the probe path.
+    /// <para>
+    /// Fire-and-forget and fully isolated, on the same contract as the failure trace: it holds no
+    /// probe slot and swallows everything. Certificate expiry is useful information, and not
+    /// useful enough to be allowed to delay a single probe.
+    /// </para>
+    /// </summary>
+    private async Task CheckCertificateAsync(PingTarget target, Settings settings)
+    {
+        try
+        {
+            var ct = _cts?.Token ?? CancellationToken.None;
+
+            // Resolve through the same cache the probes use rather than forcing a lookup: an
+            // address good enough to probe is good enough to open one more socket to.
+            var address = target.ResolvedAddress
+                ?? await _dns.ResolveAsync(target.Config.Address, settings.PreferIPv4, false, ct)
+                             .ConfigureAwait(false);
+
+            if (address is null)
+            {
+                target.SetCertificate(
+                    CertificateInfo.Failed("unresolved", DateTimeOffset.Now),
+                    settings.CertWarnDays,
+                    RetryMinutes);
+                return;
+            }
+
+            var port = target.Config.Port > 0 ? target.Config.Port : 443;
+
+            var info = await CertificateCheck
+                .InspectAsync(target.Config.Address, address, port, settings.TimeoutMs * 2, ct)
+                .ConfigureAwait(false);
+
+            // A host that was simply unreachable at startup should not go uninspected until this
+            // evening, so a failed read asks to be retried in minutes.
+            var transition = target.SetCertificate(
+                info, settings.CertWarnDays, info.HasCertificate ? 0 : RetryMinutes);
+
+            // Suppressed by the same two conditions as every other alert, and for the same reason:
+            // a maintenance window and a muted tab are statements about being left alone.
+            if (transition is { } t && !target.TabMuted && !target.InMaintenance(t.When))
+                Transition?.Invoke(t);
+        }
+        catch (OperationCanceledException)
+        {
+            // Shutting down.
+        }
+        catch (Exception)
+        {
+            // Best-effort by definition.
+        }
+    }
+
+    /// <summary>How soon to retry a certificate read that failed outright.</summary>
+    private const int RetryMinutes = 10;
 
     private async Task ReverseLookupAsync(PingTarget target, System.Net.IPAddress address, CancellationToken ct)
     {

@@ -19,7 +19,12 @@ namespace PingBoard.Core;
 /// </summary>
 public sealed class TransitionJournal
 {
-    private const int Capacity = 200;
+    /// <summary>
+    /// Raised from 200 when the journal became durable. Two hundred was sized for "what happened
+    /// while the window was in the tray", which is hours; once it survives restarts the same buffer
+    /// is answering "what has this board done lately", which is weeks.
+    /// </summary>
+    public const int Capacity = 500;
 
     private readonly Lock _gate = new();
     private readonly StateTransition[] _items = new StateTransition[Capacity];
@@ -52,6 +57,88 @@ public sealed class TransitionJournal
 
             return result;
         }
+    }
+
+    /// <summary>Everything retained, oldest first.</summary>
+    public IReadOnlyList<StateTransition> Snapshot() => Since(DateTimeOffset.MinValue);
+
+    /// <summary>
+    /// Refills the journal from a previous run, discarding whatever it held. Only the newest
+    /// <see cref="Capacity"/> entries are kept if the file holds more.
+    /// </summary>
+    public void Restore(IReadOnlyList<StateTransition> transitions)
+    {
+        lock (_gate)
+        {
+            Array.Clear(_items);
+            _next = 0;
+            _count = 0;
+
+            var start = Math.Max(0, transitions.Count - Capacity);
+
+            for (var i = start; i < transitions.Count; i++)
+            {
+                _items[_next] = transitions[i];
+                _next = (_next + 1) % Capacity;
+                if (_count < Capacity) _count++;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Pairs the recorded transitions into outages, newest first.
+    /// <para>
+    /// A down and the recovery that follows it are one event to a reader and two rows here, which
+    /// is the right storage shape and the wrong reading shape: nobody wants to scroll a list
+    /// looking for the matching half. The pairing is done on demand rather than stored, because a
+    /// stored pair cannot represent the outage that has not ended yet.
+    /// </para>
+    /// </summary>
+    /// <param name="now">
+    /// Used only to age still-open outages. Passed in rather than read from the clock so the
+    /// result is a pure function of its inputs and can be asserted on.
+    /// </param>
+    public IReadOnlyList<Outage> Outages(DateTimeOffset now)
+    {
+        var events = Snapshot();
+        var open = new Dictionary<(string, TransitionKind), Outage>();
+        var closed = new List<Outage>();
+
+        foreach (var e in events)
+        {
+            if (e.Kind == TransitionKind.Certificate) continue;
+            var key = (e.TargetName, e.Kind);
+
+            if (!e.Up)
+            {
+                // A second down without an intervening recovery should not lose the first. It
+                // cannot happen from one target, but a restored file can be missing rows.
+                if (open.TryGetValue(key, out var orphan)) closed.Add(orphan);
+                open[key] = new Outage(e.TargetName, e.When, null, TimeSpan.Zero, e.Status, e.Kind);
+                continue;
+            }
+
+            if (open.Remove(key, out var started))
+            {
+                closed.Add(started with { End = e.When, Duration = e.DownFor });
+                continue;
+            }
+
+            // Recovered with no matching start — the down half aged out of the buffer, or was
+            // written by a run whose file has since been trimmed. The duration is still known, so
+            // the outage is reconstructed backwards from it rather than dropped.
+            if (e.DownFor > TimeSpan.Zero)
+            {
+                closed.Add(new Outage(
+                    e.TargetName, e.When - e.DownFor, e.When, e.DownFor, TargetStatus.Unknown, e.Kind));
+            }
+        }
+
+        foreach (var still in open.Values)
+            closed.Add(still with { Duration = now - still.Start });
+
+        closed.Sort(static (a, b) => b.Start.CompareTo(a.Start));
+        return closed;
     }
 
     public void Clear()
@@ -151,7 +238,7 @@ public sealed class TransitionJournal
     }
 
     /// <summary>Coarse and readable. Nobody needs seconds on an outage measured in hours.</summary>
-    private static string Duration(TimeSpan span)
+    internal static string Duration(TimeSpan span)
     {
         if (span.TotalSeconds < 60) return $"{Math.Max(1, (int)span.TotalSeconds)}s";
         if (span.TotalMinutes < 60) return $"{(int)span.TotalMinutes}m";
@@ -159,4 +246,27 @@ public sealed class TransitionJournal
 
         return $"{(int)span.TotalDays}d {span.Hours}h";
     }
+}
+
+/// <summary>
+/// One period during which a target was down, or degraded — a down transition and the recovery
+/// that closed it, read as the single event a person would call it.
+/// </summary>
+/// <param name="End">Null while the outage is still running.</param>
+/// <param name="Cause">
+/// The status that opened the outage. <see cref="TargetStatus.Unknown"/> when only the recovery
+/// half survives in the journal.
+/// </param>
+public readonly record struct Outage(
+    string TargetName,
+    DateTimeOffset Start,
+    DateTimeOffset? End,
+    TimeSpan Duration,
+    TargetStatus Cause,
+    TransitionKind Kind)
+{
+    public bool Ongoing => End is null;
+
+    /// <summary>Coarse, human duration — the same rendering the away banner uses.</summary>
+    public string DurationText => TransitionJournal.Duration(Duration);
 }

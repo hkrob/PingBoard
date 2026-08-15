@@ -47,6 +47,17 @@ public sealed class AlertSettings
     /// <summary>Send an alert when the target recovers, not only when it goes down.</summary>
     public bool NotifyOnRecovery { get; set; } = true;
 
+    /// <summary>
+    /// Send webhook and email for degraded and certificate events too.
+    /// <para>
+    /// Off by default, and separately from the desktop toggle. A notification on this machine is
+    /// glanceable and costs a second; an email or a webhook usually ends up in a channel someone is
+    /// on call for, and "this link is slower than you told me to expect" does not warrant that
+    /// until the user has said it does.
+    /// </para>
+    /// </summary>
+    public bool NotifyOnDegraded { get; set; }
+
     public int TimeoutMs { get; set; } = 10_000;
 
     /// <summary>Clamps every value into a sane range. Applied after loading a hand-edited file.</summary>
@@ -95,10 +106,22 @@ public readonly record struct AlertPayload(
     public static AlertPayload From(in StateTransition t, string address) => new(
         Target: t.TargetName,
         Address: address,
-        Event: t.Up ? "recovered" : "down",
+        Event: t.Kind switch
+        {
+            TransitionKind.Degraded => t.Up ? "degraded_cleared" : "degraded",
+            TransitionKind.Certificate => "cert_expiring",
+            _ => t.Up ? "recovered" : "down",
+        },
         Status: t.Status.Label(),
         When: t.When,
-        OutageSeconds: t.Up ? Math.Round(t.DownFor.TotalSeconds, 1) : 0,
+
+        // For a certificate this field carries time *remaining* rather than time elapsed, and is
+        // negative once expiry has passed. Reusing the field keeps the payload shape stable for
+        // anything already consuming the webhook.
+        OutageSeconds: t.Kind == TransitionKind.Certificate
+            ? Math.Round(t.DownFor.TotalSeconds, 0)
+            : t.Up ? Math.Round(t.DownFor.TotalSeconds, 1) : 0,
+
         Threshold: t.Threshold,
         Host: Environment.MachineName);
 
@@ -113,9 +136,30 @@ public readonly record struct AlertPayload(
     private string Where => Address.Length == 0 ? Target : $"{Target} ({Address})";
 
     /// <summary>One-line summary, used as the mail subject and as the webhook's <c>text</c> field.</summary>
-    public string Summary() => Event == "down"
-        ? $"{Host}: {Where} is DOWN — {Status} after {Threshold} consecutive failures"
-        : $"{Host}: {Where} recovered after {FormatDuration(OutageSeconds)}";
+    public string Summary() => Event switch
+    {
+        "down" => $"{Host}: {Where} is DOWN — {Status} after {Threshold} consecutive failures",
+
+        // Says "still replying" because the whole risk with this alert is being read as an outage
+        // at a glance and sending someone to look for something that is not wrong.
+        "degraded" => $"{Host}: {Where} is DEGRADED — still replying, past its latency or loss threshold",
+        "degraded_cleared" => $"{Host}: {Where} is back within thresholds after {FormatDuration(OutageSeconds)}",
+        "cert_expiring" => CertSummary(),
+        _ => $"{Host}: {Where} recovered after {FormatDuration(OutageSeconds)}",
+    };
+
+    private string CertSummary()
+    {
+        var days = (int)Math.Floor(OutageSeconds / 86400d);
+
+        return days switch
+        {
+            < 0 => $"{Host}: {Where} TLS certificate EXPIRED {FormatDuration(-OutageSeconds)} ago",
+            0 => $"{Host}: {Where} TLS certificate expires today",
+            1 => $"{Host}: {Where} TLS certificate expires tomorrow",
+            _ => $"{Host}: {Where} TLS certificate expires in {days} days",
+        };
+    }
 
     public string Body()
     {
@@ -127,8 +171,13 @@ public readonly record struct AlertPayload(
         sb.Append("Event:     ").AppendLine(Event);
         sb.Append("Status:    ").AppendLine(Status);
         sb.Append("When:      ").AppendLine(When.ToString("yyyy-MM-dd HH:mm:ss zzz", CultureInfo.InvariantCulture));
-        if (Event == "recovered")
-            sb.Append("Outage:    ").AppendLine(FormatDuration(OutageSeconds));
+        if (Event is "recovered" or "degraded_cleared")
+            sb.Append("Duration:  ").AppendLine(FormatDuration(OutageSeconds));
+        if (Event == "cert_expiring")
+        {
+            sb.Append("Remaining: ").AppendLine(
+                OutageSeconds < 0 ? "expired" : FormatDuration(OutageSeconds));
+        }
         sb.Append("Threshold: ").AppendLine(Threshold.ToString(CultureInfo.InvariantCulture));
         sb.Append("Monitor:   ").AppendLine(Host);
         return sb.ToString();

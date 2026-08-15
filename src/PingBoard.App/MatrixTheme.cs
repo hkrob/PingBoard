@@ -49,6 +49,10 @@ public static class MatrixTheme
         ("StatusUnreachableBrush", Color.FromArgb(0xFF, 0xFF, 0x3B, 0x30)),
         ("StatusDnsBrush",         Color.FromArgb(0xFF, 0x3B, 0xFF, 0xD4)),
         ("StatusRefusedBrush",     Color.FromArgb(0xFF, 0xFF, 0x8C, 0x1A)),
+
+        // Pale rather than another hue: on a green terminal a degraded host is a healthy one with
+        // a caveat, and giving it a colour as loud as a failure would misrepresent it.
+        ("StatusDegradedBrush",    Color.FromArgb(0xFF, 0xCC, 0xFF, 0xCC)),
         ("StatusIdleBrush",        Color.FromArgb(0xFF, 0x2A, 0x7A, 0x38)),
         ("SparkOkBrush",           Color.FromArgb(0xFF, 0x00, 0xC8, 0x33)),
         ("SparkBadBrush",          Color.FromArgb(0xFF, 0xB3, 0x1D, 0x14)),

@@ -254,8 +254,35 @@ public sealed partial class TargetRow : ObservableObject
         if (s.DownFor is { } down) parts.Add($"Down for {FormatSpan(down)}");
         if (s.Stats.HasData) parts.Add($"Jitter {s.Stats.JitterMs:F1} ms over {s.Stats.Samples} samples");
         if (s.ConsecutiveFailures > 0) parts.Add($"{s.ConsecutiveFailures} consecutive failures");
+        if (CertificateLine(s.Certificate) is { } cert) parts.Add(cert);
 
         return string.Join('\n', parts);
+    }
+
+    /// <summary>
+    /// The certificate line for an HTTPS target's tooltip, or null when there is nothing to say.
+    /// <para>
+    /// Reads as days rather than as a date because the question is always "have I got time", and
+    /// converting <c>14 Nov 2026</c> into that answer is work the reader should not be doing.
+    /// </para>
+    /// </summary>
+    private static string? CertificateLine(CertificateInfo? certificate)
+    {
+        if (certificate is not { } cert) return null;
+        if (!cert.HasCertificate) return $"Certificate: {cert.Error}";
+
+        var days = cert.DaysRemaining(DateTimeOffset.Now);
+        var expiry = cert.NotAfter.ToString("dd MMM yyyy", CultureInfo.CurrentCulture);
+
+        var line = days switch
+        {
+            < 0 => $"Certificate EXPIRED {expiry}",
+            0 => $"Certificate expires today ({expiry})",
+            1 => $"Certificate expires tomorrow ({expiry})",
+            _ => $"Certificate expires in {days} days ({expiry})",
+        };
+
+        return cert.Trusted ? line : line + " — not trusted";
     }
 
     private static string BrushKeyFor(TargetStatus status) => status switch
@@ -265,6 +292,7 @@ public sealed partial class TargetRow : ObservableObject
         TargetStatus.Unreachable => "StatusUnreachableBrush",
         TargetStatus.DnsFail => "StatusDnsBrush",
         TargetStatus.Refused => "StatusRefusedBrush",
+        TargetStatus.Degraded => "StatusDegradedBrush",
         _ => "StatusIdleBrush",
     };
 

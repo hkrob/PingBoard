@@ -43,6 +43,8 @@ public sealed partial class TargetDialog : ContentDialog
             SetOptional(PayloadBox, config.PayloadBytes);
             SetOptional(TtlBox, config.Ttl);
             SetOptional(FailuresBox, config.FailuresBeforeDown);
+            SetOptional(DegradedLatencyBox, config.DegradedLatencyMs);
+            SetOptional(DegradedLossBox, config.DegradedLossPercent);
 
             _nameEditedByUser = true;
         }
@@ -74,8 +76,18 @@ public sealed partial class TargetDialog : ContentDialog
 
     private static void ClearOptional(NumberBox box) => box.Value = double.NaN;
 
+    private static void SetOptional(NumberBox box, double? value) =>
+        box.Value = value ?? double.NaN;
+
     private static int? ReadOptional(NumberBox box) =>
         double.IsNaN(box.Value) ? null : (int)box.Value;
+
+    /// <summary>
+    /// As <see cref="ReadOptional"/>, keeping the fraction — half a percent of loss is a
+    /// distinction worth having on a threshold.
+    /// </summary>
+    private static double? ReadOptionalDouble(NumberBox box) =>
+        double.IsNaN(box.Value) ? null : box.Value;
 
     private void OnAddressChanged(object sender, TextChangedEventArgs e)
     {
@@ -212,6 +224,8 @@ public sealed partial class TargetDialog : ContentDialog
             PayloadBytes = isIcmp ? ReadOptional(PayloadBox) : null,
             Ttl = isIcmp ? ReadOptional(TtlBox) : null,
             FailuresBeforeDown = ReadOptional(FailuresBox),
+            DegradedLatencyMs = ReadOptional(DegradedLatencyBox),
+            DegradedLossPercent = ReadOptionalDouble(DegradedLossBox),
         };
     }
 

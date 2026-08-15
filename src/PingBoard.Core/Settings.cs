@@ -40,6 +40,62 @@ public sealed class Settings
     public string LogPath { get; set; } = "pingboard-events.csv";
     public bool LogEnabled { get; set; } = true;
 
+    /// <summary>
+    /// Average round-trip time, over the last <see cref="DegradedSamples"/> probes, above which a
+    /// target that is still replying is shown as degraded. Zero disables it.
+    /// <para>
+    /// <b>Off by default, and deliberately so.</b> Any non-zero global default here is a guess
+    /// about somebody else's network: 80 ms is a failing LAN and an excellent link to the other
+    /// side of the world, and the same number cannot be right for both. A board that turned amber
+    /// on first launch because a host in Sydney behaved exactly as expected would teach the user to
+    /// ignore the colour, which costs more than the feature is worth. Set it per target, where the
+    /// number means something.
+    /// </para>
+    /// </summary>
+    public int DegradedLatencyMs { get; set; }
+
+    /// <summary>
+    /// Packet loss percentage, over the same window, above which a target is shown as degraded.
+    /// Zero disables it. Off by default for the same reason as <see cref="DegradedLatencyMs"/> —
+    /// plenty of routers deprioritise ICMP and answer nine echoes in ten while forwarding traffic
+    /// perfectly.
+    /// </summary>
+    public double DegradedLossPercent { get; set; }
+
+    /// <summary>
+    /// How many recent probes the degraded assessment averages over.
+    /// <para>
+    /// Short on purpose. The rolling window is 300 samples — ten minutes at the default interval —
+    /// which is the right span for statistics you read, and far too slow for a state you watch: a
+    /// link that goes bad would take five minutes to turn amber and five more to turn back. Twenty
+    /// samples reacts inside a minute while still ignoring a single slow reply.
+    /// </para>
+    /// </summary>
+    public int DegradedSamples { get; set; } = 20;
+
+    /// <summary>
+    /// Raise a notification when a target enters or leaves the degraded state. Off by default:
+    /// degradation is a condition you look at, not an emergency you are woken for, and the board
+    /// and the outage log both record it either way.
+    /// </summary>
+    public bool NotifyOnDegraded { get; set; }
+
+    /// <summary>Record up/down transitions to the outage log, so they survive a restart.</summary>
+    public bool OutageLogEnabled { get; set; } = true;
+
+    /// <summary>
+    /// How often to re-read the TLS certificate of each HTTPS target.
+    /// <para>
+    /// Hours rather than seconds because a certificate is a fact that changes a handful of times a
+    /// year. Checking it on the probe interval would open an extra TLS handshake every two seconds
+    /// per target to re-read a value that has not moved since the last one.
+    /// </para>
+    /// </summary>
+    public int CertCheckHours { get; set; } = 6;
+
+    /// <summary>Days of remaining certificate validity below which the target is flagged.</summary>
+    public int CertWarnDays { get; set; } = 14;
+
     /// <summary>Grace period after wake before probing resumes, letting the network stack settle.</summary>
     public int ResumeSettleMs { get; set; } = 5000;
 
@@ -74,6 +130,14 @@ public sealed class Settings
         ResumeSettleMs = Math.Clamp(ResumeSettleMs, 0, 120_000);
         TraceMaxHops = Math.Clamp(TraceMaxHops, 1, 64);
         TraceHopTimeoutMs = Math.Clamp(TraceHopTimeoutMs, 100, 10_000);
+
+        // Zero stays zero — it is the "off" switch, not a small threshold — so clamp only the
+        // range above it.
+        if (DegradedLatencyMs != 0) DegradedLatencyMs = Math.Clamp(DegradedLatencyMs, 1, 600_000);
+        if (DegradedLossPercent != 0) DegradedLossPercent = Math.Clamp(DegradedLossPercent, 0.1, 100);
+        DegradedSamples = Math.Clamp(DegradedSamples, 3, 1000);
+        CertCheckHours = Math.Clamp(CertCheckHours, 1, 720);
+        CertWarnDays = Math.Clamp(CertWarnDays, 1, 365);
 
         // A timeout longer than the interval guarantees permanently skipped ticks against a dead
         // host. Allowed, but pull it back to something coherent.

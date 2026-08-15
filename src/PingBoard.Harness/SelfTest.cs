@@ -44,6 +44,15 @@ internal static class SelfTest
             TabsGroupWithoutGating(scratch);
             UpdateVersionComparison();
             HttpProbeJudgesTheStatusCode();
+            RecentStatsWindow();
+            DegradedState();
+            DegradedThresholdsRoundTrip(scratch);
+            OutagePairing();
+            OutageStoreRoundTrip(scratch);
+            CertificateArithmetic();
+            CertificateWarnsOnce();
+            ExportsAreParsable();
+            SoftAlertWording();
         }
         finally
         {
@@ -625,13 +634,22 @@ internal static class SelfTest
         Check("away: only the first few are named", trimmed.Contains("and 3 others", StringComparison.Ordinal));
         Check("away: a later host is not named", !trimmed.Contains("host5", StringComparison.Ordinal));
 
-        // Bounded like every other buffer here.
+        // Bounded like every other buffer here. Asserted against the constant rather than a
+        // literal, so raising the capacity is a decision rather than a test failure.
         var flood = new TransitionJournal();
-        for (var i = 0; i < 500; i++)
+        for (var i = 0; i < TransitionJournal.Capacity * 2; i++)
             flood.Add(new StateTransition($"t{i}", Up: false, start.AddSeconds(i), TimeSpan.Zero, TargetStatus.Timeout, 3));
 
-        Check("away: the journal is capped", flood.Since(start).Count <= 200);
-        Check("away: and keeps the newest", flood.Since(start).Last().TargetName == "t499");
+        Check("away: the journal is capped", flood.Since(start).Count == TransitionJournal.Capacity);
+        Check("away: and keeps the newest",
+            flood.Since(start).Last().TargetName == $"t{TransitionJournal.Capacity * 2 - 1}");
+
+        // Restoring must respect the same cap, or a file grown by an older build would overflow it.
+        var restored = new TransitionJournal();
+        restored.Restore(flood.Snapshot());
+        Check("away: restore round-trips the journal",
+            restored.Snapshot().Count == TransitionJournal.Capacity
+            && restored.Snapshot()[^1].TargetName == flood.Snapshot()[^1].TargetName);
     }
 
     private static void RingBufferRolls()
@@ -1442,6 +1460,450 @@ internal static class SelfTest
         var port = ((System.Net.IPEndPoint)probe.LocalEndpoint).Port;
         probe.Stop();
         return port;
+    }
+
+    // ------------------------------------------------------------ degraded state
+
+    private static void RecentStatsWindow()
+    {
+        var ring = new RingBuffer(100);
+        var now = DateTimeOffset.Now;
+
+        // Twenty fast replies, then five slow ones.
+        for (var i = 0; i < 20; i++) ring.Add(ProbeResult.Ok(10, System.Net.IPAddress.Loopback, i, now));
+        for (var i = 0; i < 5; i++) ring.Add(ProbeResult.Ok(500, System.Net.IPAddress.Loopback, 20 + i, now));
+
+        var all = ring.Stats();
+        var recent = ring.RecentStats(5);
+
+        Check("recent: full window is dominated by the fast samples", all.AvgMs < 120);
+        Check("recent: short window sees only the slow ones", Math.Abs(recent.AvgMs - 500) < 0.001);
+        Check("recent: sample count is the window, not the buffer", recent.Samples == 5);
+
+        // The whole point of the short window: it must react while the long one still looks fine.
+        Check("recent: windows genuinely disagree", recent.AvgMs > all.AvgMs * 2);
+
+        Check("recent: asking for more than exists yields everything", ring.RecentStats(1000).Samples == 25);
+        Check("recent: zero-width window has no data", !ring.RecentStats(0).HasData);
+    }
+
+    private static void DegradedState()
+    {
+        var settings = new Settings { RollingWindow = 100 };
+        var config = new TargetConfig { Name = "slow", Address = "10.0.0.1" };
+        using var target = new PingTarget(config, settings);
+
+        var now = DateTimeOffset.Now;
+        var tick = 0L;
+
+        StateTransition? Feed(int rttMs, DegradeThresholds thresholds, int count = 1)
+        {
+            StateTransition? last = null;
+            for (var i = 0; i < count; i++)
+            {
+                var result = ProbeResult.Ok(rttMs, System.Net.IPAddress.Loopback, tick += 1000, now);
+                var t = target.Record(result, 3, thresholds: thresholds);
+                if (t is not null) last = t;
+            }
+            return last;
+        }
+
+        // Off by default: the parameterless overload must behave exactly as it did before the
+        // state existed, or every existing caller silently changes meaning.
+        Feed(5000, default, 10);
+        Check("degraded: off by default", target.Snapshot().Status == TargetStatus.Ok);
+
+        var thresholds = new DegradeThresholds(LatencyMs: 100, LossPercent: 0, Samples: 20);
+
+        // Below the minimum sample count, nothing may be judged.
+        using var fresh = new PingTarget(new TargetConfig { Name = "fresh", Address = "10.0.0.2" }, settings);
+        var early = fresh.Record(
+            ProbeResult.Ok(9000, System.Net.IPAddress.Loopback, 1, now), 3, thresholds: thresholds);
+
+        Check("degraded: refuses to judge on one sample",
+            early is null && fresh.Snapshot().Status == TargetStatus.Ok);
+
+        var entered = Feed(5000, thresholds, 10);
+
+        Check("degraded: enters once past the threshold",
+            target.Snapshot().Status == TargetStatus.Degraded);
+        Check("degraded: entering raises a soft transition",
+            entered is { Up: false, Kind: TransitionKind.Degraded });
+
+        var again = Feed(5000, thresholds, 5);
+        Check("degraded: does not re-announce while it persists", again is null);
+
+        // Still an "up" state everywhere it matters.
+        var snap = target.Snapshot();
+        Check("degraded: counts as OK", snap.Status.IsOk());
+        Check("degraded: is not healthy", !snap.Status.IsHealthy());
+        Check("degraded: no failures recorded", snap.NokCount == 0 && snap.ConsecutiveFailures == 0);
+        Check("degraded: availability is unharmed",
+            target.Availability.Percent(24, now) is { } pct && pct > 99.9);
+
+        var cleared = Feed(5, thresholds, 25);
+        Check("degraded: clears when the window recovers",
+            target.Snapshot().Status == TargetStatus.Ok);
+        Check("degraded: clearing raises the closing transition",
+            cleared is { Up: true, Kind: TransitionKind.Degraded });
+
+        // Loss, rather than latency, must be able to trigger it on its own.
+        using var lossy = new PingTarget(new TargetConfig { Name = "lossy", Address = "10.0.0.3" }, settings);
+        var lossThresholds = new DegradeThresholds(LatencyMs: 0, LossPercent: 10, Samples: 20);
+        var lossTick = 0L;
+
+        for (var i = 0; i < 20; i++)
+        {
+            var result = i % 4 == 0
+                ? ProbeResult.Fail(TargetStatus.Timeout, lossTick += 1000, now)
+                : ProbeResult.Ok(5, System.Net.IPAddress.Loopback, lossTick += 1000, now);
+
+            lossy.Record(result, failuresBeforeDown: 99, thresholds: lossThresholds);
+        }
+
+        Check("degraded: loss alone can trigger it", lossy.Snapshot().Status == TargetStatus.Degraded);
+
+        // A hard outage must take precedence and reset the soft latch.
+        using var falls = new PingTarget(new TargetConfig { Name = "falls", Address = "10.0.0.4" }, settings);
+        var fallTick = 0L;
+        for (var i = 0; i < 10; i++)
+            falls.Record(ProbeResult.Ok(5000, System.Net.IPAddress.Loopback, fallTick += 1000, now),
+                         3, thresholds: thresholds);
+
+        StateTransition? down = null;
+        for (var i = 0; i < 3; i++)
+        {
+            var t = falls.Record(ProbeResult.Fail(TargetStatus.Timeout, fallTick += 1000, now),
+                                 3, thresholds: thresholds);
+            if (t is not null) down = t;
+        }
+
+        Check("degraded: a real outage still fires as a hard transition",
+            down is { Up: false, Kind: TransitionKind.Hard });
+    }
+
+    private static void DegradedThresholdsRoundTrip(string dir)
+    {
+        var path = Path.Combine(dir, "degraded.ini");
+
+        var settings = new Settings
+        {
+            DegradedLatencyMs = 250,
+            DegradedLossPercent = 2.5,
+            DegradedSamples = 40,
+            CertWarnDays = 21,
+            OutageLogEnabled = false,
+        };
+
+        var targets = new List<TargetConfig>
+        {
+            new() { Name = "wan", Address = "1.1.1.1", DegradedLatencyMs = 80, DegradedLossPercent = 0.5 },
+
+            // Zero is a real value here — "off for this host" — and must not be mistaken for unset.
+            new() { Name = "satellite", Address = "8.8.8.8", DegradedLatencyMs = 0 },
+        };
+
+        ConfigStore.Save(path, settings, targets);
+        var loaded = ConfigStore.Load(path);
+
+        Check("degraded ini: global latency survives", loaded.Settings.DegradedLatencyMs == 250);
+        Check("degraded ini: fractional loss survives",
+            Math.Abs(loaded.Settings.DegradedLossPercent - 2.5) < 0.001);
+        Check("degraded ini: sample window survives", loaded.Settings.DegradedSamples == 40);
+        Check("degraded ini: cert warning survives", loaded.Settings.CertWarnDays == 21);
+        Check("degraded ini: outage log toggle survives", !loaded.Settings.OutageLogEnabled);
+
+        var wan = loaded.Targets.Single(t => t.Name == "wan");
+        Check("degraded ini: per-target latency survives", wan.DegradedLatencyMs == 80);
+        Check("degraded ini: per-target fractional loss survives",
+            wan.DegradedLossPercent is { } loss && Math.Abs(loss - 0.5) < 0.001);
+
+        var satellite = loaded.Targets.Single(t => t.Name == "satellite");
+        Check("degraded ini: an explicit zero is not read as inherit", satellite.DegradedLatencyMs == 0);
+        Check("degraded ini: an absent override stays null", satellite.DegradedLossPercent is null);
+    }
+
+    // ------------------------------------------------------------ outage log
+
+    private static void OutagePairing()
+    {
+        var journal = new TransitionJournal();
+        var start = DateTimeOffset.Now.AddHours(-3);
+
+        journal.Add(new StateTransition("gw", false, start, TimeSpan.Zero, TargetStatus.Timeout, 3));
+        journal.Add(new StateTransition("gw", true, start.AddMinutes(4), TimeSpan.FromMinutes(4),
+                                        TargetStatus.Ok, 3));
+
+        // A second, still open.
+        journal.Add(new StateTransition("wan", false, start.AddHours(1), TimeSpan.Zero,
+                                        TargetStatus.Unreachable, 3));
+
+        // A recovery whose opening half has aged out of the buffer.
+        journal.Add(new StateTransition("orphan", true, start.AddHours(2), TimeSpan.FromMinutes(9),
+                                        TargetStatus.Ok, 3));
+
+        var now = start.AddHours(3);
+        var outages = journal.Outages(now);
+
+        Check("outages: three events pair into three outages", outages.Count == 3);
+        Check("outages: newest first", outages[0].Start >= outages[^1].Start);
+
+        var gw = outages.Single(o => o.TargetName == "gw");
+        Check("outages: a closed outage carries its duration",
+            !gw.Ongoing && Math.Abs(gw.Duration.TotalMinutes - 4) < 0.001);
+        Check("outages: the cause is the status that opened it", gw.Cause == TargetStatus.Timeout);
+
+        var wan = outages.Single(o => o.TargetName == "wan");
+        Check("outages: an unclosed outage is ongoing", wan.Ongoing && wan.End is null);
+        Check("outages: an ongoing outage is aged to now",
+            Math.Abs(wan.Duration.TotalHours - 2) < 0.01);
+
+        var orphan = outages.Single(o => o.TargetName == "orphan");
+        Check("outages: a recovery without its start is reconstructed backwards",
+            !orphan.Ongoing && Math.Abs((orphan.End!.Value - orphan.Start).TotalMinutes - 9) < 0.001);
+        Check("outages: a reconstructed outage admits it does not know the cause",
+            orphan.Cause == TargetStatus.Unknown);
+
+        // Degraded periods pair separately, so a host that is slow and then down keeps both.
+        var mixed = new TransitionJournal();
+        mixed.Add(new StateTransition("both", false, start, TimeSpan.Zero, TargetStatus.Degraded, 0,
+                                      TransitionKind.Degraded));
+        mixed.Add(new StateTransition("both", false, start.AddMinutes(1), TimeSpan.Zero,
+                                      TargetStatus.Timeout, 3));
+
+        var mixedOutages = mixed.Outages(now);
+        Check("outages: degraded and down are separate events for one target",
+            mixedOutages.Count == 2
+            && mixedOutages.Any(o => o.Kind == TransitionKind.Degraded)
+            && mixedOutages.Any(o => o.Kind == TransitionKind.Hard));
+    }
+
+    private static void OutageStoreRoundTrip(string dir)
+    {
+        var path = Path.Combine(dir, "outages.csv");
+        var store = new OutageStore(path);
+        var when = DateTimeOffset.Now.AddMinutes(-30);
+
+        // A name with a comma and a quote, to prove the escaping survives a round trip.
+        var awkward = "site \"A\", north";
+
+        store.Append(new StateTransition(awkward, false, when, TimeSpan.Zero, TargetStatus.Timeout, 3));
+        store.Append(new StateTransition(awkward, true, when.AddMinutes(2), TimeSpan.FromMinutes(2),
+                                         TargetStatus.Ok, 3));
+        store.Append(new StateTransition("tls", false, when, TimeSpan.FromDays(9),
+                                         TargetStatus.Degraded, 14, TransitionKind.Certificate));
+
+        var reloaded = new OutageStore(path).Load();
+
+        Check("outage store: every line comes back", reloaded.Count == 3);
+        Check("outage store: quoted names survive", reloaded[0].TargetName == awkward);
+        Check("outage store: direction survives", !reloaded[0].Up && reloaded[1].Up);
+        Check("outage store: duration survives",
+            Math.Abs(reloaded[1].DownFor.TotalMinutes - 2) < 0.01);
+        Check("outage store: status survives", reloaded[0].Status == TargetStatus.Timeout);
+        Check("outage store: kind survives", reloaded[2].Kind == TransitionKind.Certificate);
+        Check("outage store: timestamps survive to the second",
+            Math.Abs((reloaded[0].When - when).TotalSeconds) < 1);
+
+        // A half-written final line after a power cut must cost that line and nothing else.
+        File.AppendAllText(path, "2026-01-01T00:00:00+00:00,truncated,Har" + Environment.NewLine);
+        File.AppendAllText(path, "not a csv line at all" + Environment.NewLine);
+
+        var survived = new OutageStore(path).Load();
+        Check("outage store: malformed lines are skipped, not fatal", survived.Count == 3);
+
+        // Rewrite is what compaction uses; it must leave a file that still loads.
+        store.Rewrite([reloaded[0]]);
+        Check("outage store: rewrite replaces the file", new OutageStore(path).Load().Count == 1);
+
+        // An unwritable path must never throw into the probe loop.
+        var blocked = new OutageStore(Path.Combine(dir, "no-such-dir\0bad", "x.csv"));
+        blocked.Append(new StateTransition("x", false, when, TimeSpan.Zero, TargetStatus.Timeout, 3));
+        Check("outage store: an unusable path degrades quietly", blocked.Load().Count == 0);
+    }
+
+    // ------------------------------------------------------------ certificates
+
+    private static void CertificateArithmetic()
+    {
+        var now = new DateTimeOffset(2026, 6, 1, 12, 0, 0, TimeSpan.Zero);
+
+        var healthy = new CertificateInfo(
+            "CN=example.com, O=Example Ltd, C=GB", "CN=Some CA",
+            now.AddDays(-30), now.AddDays(60), true, "", now);
+
+        Check("cert: days remaining rounds down", healthy.DaysRemaining(now) == 60);
+        Check("cert: not expiring far out", !healthy.IsExpiring(now, 14));
+        Check("cert: not expired", !healthy.IsExpired(now));
+        Check("cert: common name is extracted for a narrow column",
+            healthy.ShortSubject == "example.com");
+
+        // Eleven hours left is zero days, not one — the floor matters at exactly the point the
+        // number is being used to decide whether there is time to act.
+        var soon = healthy with { NotAfter = now.AddHours(11) };
+        Check("cert: a part-day is floored to zero", soon.DaysRemaining(now) == 0);
+        Check("cert: a part-day counts as expiring", soon.IsExpiring(now, 14));
+
+        var expired = healthy with { NotAfter = now.AddDays(-2) };
+        Check("cert: expiry in the past is negative", expired.DaysRemaining(now) == -2);
+        Check("cert: expired is expired", expired.IsExpired(now));
+        Check("cert: expired also counts as expiring", expired.IsExpiring(now, 14));
+
+        var failed = CertificateInfo.Failed("connection refused", now);
+        Check("cert: a failed read has no certificate", !failed.HasCertificate);
+        Check("cert: a failed read is not reported as expiring", !failed.IsExpiring(now, 14));
+
+        var noCn = healthy with { Subject = "O=Example Ltd" };
+        Check("cert: a subject without a CN falls back to the whole string",
+            noCn.ShortSubject == "O=Example Ltd");
+    }
+
+    private static void CertificateWarnsOnce()
+    {
+        var settings = new Settings();
+        var config = new TargetConfig { Name = "tls", Address = "example.com", Probe = ProbeKind.Https };
+        using var target = new PingTarget(config, settings);
+
+        var now = DateTimeOffset.Now;
+        var expiring = new CertificateInfo(
+            "CN=example.com", "CN=CA", now.AddDays(-300), now.AddDays(5), true, "", now);
+
+        var first = target.SetCertificate(expiring, warnDays: 14);
+        var second = target.SetCertificate(expiring, warnDays: 14);
+
+        Check("cert: warns on the crossing", first is { Kind: TransitionKind.Certificate, Up: false });
+        Check("cert: carries the time remaining, not an elapsed duration",
+            first is { } t && Math.Abs(t.DownFor.TotalDays - 5) < 0.01);
+        Check("cert: does not warn again while still expiring", second is null);
+
+        // A renewal must re-arm the warning, or the next approach to expiry is silent.
+        var renewed = expiring with { NotAfter = now.AddDays(400) };
+        Check("cert: a renewal is not itself an alert",
+            target.SetCertificate(renewed, warnDays: 14) is null);
+        Check("cert: after renewal the warning re-arms",
+            target.SetCertificate(expiring, warnDays: 14) is not null);
+
+        Check("cert: the reading is exposed on the snapshot",
+            target.Snapshot().Certificate is { HasCertificate: true });
+
+        // Only HTTPS targets are ever due for a check.
+        using var icmp = new PingTarget(new TargetConfig { Name = "p", Address = "10.0.0.1" }, settings);
+        Check("cert: an ICMP target is never due for a certificate check",
+            !icmp.TryBeginCertCheck(6));
+        Check("cert: an HTTPS target is due immediately", target.TryBeginCertCheck(6));
+        Check("cert: and not due again straight afterwards", !target.TryBeginCertCheck(6));
+    }
+
+    // ------------------------------------------------------------ export
+
+    private static void ExportsAreParsable()
+    {
+        var settings = new Settings { RollingWindow = 50 };
+        var now = DateTimeOffset.Now;
+
+        using var target = new PingTarget(
+            new TargetConfig { Name = "gw, main", Address = "10.1.10.1", Tab = "core" }, settings);
+
+        for (var i = 0; i < 10; i++)
+            target.Record(ProbeResult.Ok(20 + i, System.Net.IPAddress.Loopback, i * 1000, now), 3);
+
+        var board = Export.Board([target], now);
+        var lines = board.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+
+        Check("export: board has a header and one row per target", lines.Length == 2);
+        Check("export: a comma in a name is quoted", lines[1].StartsWith("\"gw, main\",", StringComparison.Ordinal));
+        Check("export: the header names the availability columns",
+            lines[0].Contains("avail_24h", StringComparison.Ordinal)
+            && lines[0].Contains("avail_30d", StringComparison.Ordinal));
+        Check("export: the header names the certificate columns",
+            lines[0].Contains("cert_expires", StringComparison.Ordinal));
+        Check("export: every row has as many fields as the header",
+            CountFields(lines[0]) == CountFields(lines[1]));
+
+        var history = Export.History([target]);
+        Check("export: history writes one row per retained sample",
+            history.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length == 11);
+
+        var outages = Export.Outages(
+        [
+            new Outage("gw", now.AddMinutes(-10), now.AddMinutes(-8), TimeSpan.FromMinutes(2),
+                       TargetStatus.Timeout, TransitionKind.Hard),
+            new Outage("wan", now.AddMinutes(-5), null, TimeSpan.FromMinutes(5),
+                       TargetStatus.Unreachable, TransitionKind.Hard),
+        ]);
+
+        // Trimmed because the writer ends rows with CRLF, which is right for a CSV on Windows and
+        // leaves a stray carriage return on the end of every line when split on '\n' alone.
+        var outageLines = outages.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                                 .Select(l => l.TrimEnd('\r'))
+                                 .ToArray();
+
+        Check("export: outages write a header and one row each", outageLines.Length == 3);
+        Check("export: a closed outage is marked not ongoing",
+            outageLines[1].EndsWith(",no", StringComparison.Ordinal));
+        Check("export: an open outage is marked ongoing",
+            outageLines[2].EndsWith(",yes", StringComparison.Ordinal));
+
+        Check("export: an empty board still writes its header",
+            Export.Board([], now).Split('\n', StringSplitOptions.RemoveEmptyEntries).Length == 1);
+
+        static int CountFields(string line)
+        {
+            int fields = 1, i = 0;
+            var quoted = false;
+
+            for (; i < line.Length; i++)
+            {
+                if (line[i] == '"') quoted = !quoted;
+                else if (line[i] == ',' && !quoted) fields++;
+            }
+
+            return fields;
+        }
+    }
+
+    private static void SoftAlertWording()
+    {
+        var now = DateTimeOffset.Now;
+
+        var degraded = AlertPayload.From(
+            new StateTransition("wan", false, now, TimeSpan.Zero, TargetStatus.Degraded, 0,
+                                TransitionKind.Degraded), "1.1.1.1");
+
+        Check("alerts: a degraded event is not labelled down", degraded.Event == "degraded");
+        Check("alerts: the summary says the host is still replying",
+            degraded.Summary().Contains("still replying", StringComparison.Ordinal));
+        Check("alerts: a degraded summary never says DOWN",
+            !degraded.Summary().Contains("is DOWN", StringComparison.Ordinal));
+
+        var cert = AlertPayload.From(
+            new StateTransition("tls", false, now, TimeSpan.FromDays(9), TargetStatus.Degraded, 14,
+                                TransitionKind.Certificate), "93.184.216.34");
+
+        Check("alerts: a certificate event has its own kind", cert.Event == "cert_expiring");
+        Check("alerts: the summary counts the days",
+            cert.Summary().Contains("expires in 9 days", StringComparison.Ordinal));
+
+        var expired = AlertPayload.From(
+            new StateTransition("tls", false, now, TimeSpan.FromDays(-2), TargetStatus.Degraded, 14,
+                                TransitionKind.Certificate), "93.184.216.34");
+
+        Check("alerts: an already-expired certificate says so",
+            expired.Summary().Contains("EXPIRED", StringComparison.Ordinal));
+
+        // The webhook payload must stay valid JSON with a negative number in it.
+        Check("alerts: an expired certificate still emits well-formed json",
+            expired.ToJson() is { } json && json.StartsWith('{') && json.EndsWith('}')
+            && json.Contains("\"outage_seconds\":-", StringComparison.Ordinal));
+
+        // Soft transitions are opt-in for remote sinks, and both halves must be gated together.
+        var off = new AlertSettings { WebhookEnabled = true, WebhookUrl = "https://example.invalid/x" };
+        Check("alerts: degraded is off by default for webhook and email", !off.NotifyOnDegraded);
+
+        var hard = AlertPayload.From(
+            new StateTransition("wan", false, now, TimeSpan.Zero, TargetStatus.Timeout, 3), "1.1.1.1");
+        Check("alerts: an ordinary outage is unchanged", hard.Event == "down"
+            && hard.Summary().Contains("is DOWN", StringComparison.Ordinal));
     }
 
     private static void Check(string name, bool ok)

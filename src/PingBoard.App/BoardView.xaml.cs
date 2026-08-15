@@ -206,20 +206,27 @@ public sealed partial class BoardView : UserControl
     {
         try
         {
-            var picker = new Windows.Storage.Pickers.FileSavePicker();
-            InitializeWithWindow.Initialize(picker, _ownerHwnd);
-            picker.FileTypeChoices.Add("CSV", [".csv"]);
-            picker.SuggestedFileName = "pingboard-export";
-
-            var file = await picker.PickSaveFileAsync();
-            if (file is null) return;
-
-            await File.WriteAllTextAsync(file.Path, Vm.ToCsv());
+            ExportDialog.OwnerHwnd = _ownerHwnd;
+            await ExportDialog.ShowAsync(XamlRoot, Vm, Vm.ShowBanner);
         }
         catch (Exception ex)
         {
             CrashLog.Write(ex);
             Vm.ShowBanner($"Could not export — {ex.Message}");
+        }
+    }
+
+    private async void OnOutageLog(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            ExportDialog.OwnerHwnd = _ownerHwnd;
+            await OutageLogDialog.ShowAsync(XamlRoot, Vm, Vm.ShowBanner);
+        }
+        catch (Exception ex)
+        {
+            CrashLog.Write(ex);
+            Vm.ShowBanner($"Could not open the outage log — {ex.Message}");
         }
     }
 

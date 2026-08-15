@@ -250,6 +250,82 @@ thirty-day figure, and showing a perfect one would be a lie of exactly the kind 
 reports. Paused, suspended and maintenance samples are excluded, so a laptop that sleeps nightly
 does not accumulate fake downtime.
 
+### The outage log
+
+⚙ → **Outage log…**: every drop, when it started, how long it lasted and what caused it, newest
+first, surviving restarts.
+
+This is the question the availability columns provoke and could not answer. `99.2%` over seven days
+invites exactly one follow-up — *which outages made up the 0.8%* — and until now nothing could say.
+Transitions were recorded in two places, both of which lost them: a CSV nobody opens, and an
+in-memory journal that surfaced once as a line of banner text and was discarded at the next launch.
+
+Stored in `%AppData%\PingBoard\outages.csv`, appended a line at a time so a power cut costs the last
+transition rather than the file, and compacted when it outgrows the journal. A down and the recovery
+that closed it are stored as two rows and read as one event, because an outage that has not ended
+yet cannot be stored as a pair.
+
+Kept separate from the events CSV on purpose. That one is written for a person — it rotates, it
+prints `UNREACHABLE` rather than an enum, and its path is configurable so it can live on a share and
+be opened in a spreadsheet next year. Parsing it back would make a human-facing format load-bearing
+for program behaviour, which is the reliable way to guarantee that improving the wording breaks the
+feature.
+
+### Degraded
+
+Status used to be binary: up or down. A link sitting at 900 ms with 30% loss was **green** — and
+real networks degrade well before they fail, which is the part worth catching early.
+
+Set `DegradedLatencyMs` or `DegradedLossPercent` and a target that is still replying, but past
+either, reads `DEGRADED` instead of `OK`. It is an *up* state everywhere it matters: counters,
+availability figures and recovery from a real outage all behave exactly as before. Only the display
+and the log differ.
+
+Assessed over the last 20 probes rather than the full rolling window, which is ten minutes and far
+too slow for something you watch, and never on fewer than five samples — one slow reply after a
+restart is not evidence.
+
+**Both default to off, and should.** Any global default is a guess about someone else's network:
+60 ms is a broken LAN and an excellent path to Frankfurt, and plenty of routers deprioritise ICMP
+while forwarding traffic perfectly. Set them per target, where the number means something:
+
+```ini
+[Target:office-wan]
+Address=203.0.113.9
+DegradedLatencyMs=120
+DegradedLossPercent=2
+```
+
+Notifications for it are opt-in separately, and off by default — a slow link is something to notice,
+not to be woken for.
+
+### Certificate expiry
+
+HTTPS targets have their TLS certificate read every few hours, on its own connection rather than on
+every probe: a certificate changes a handful of times a year, and re-reading it every two seconds to
+watch a date not move is pure cost. Expiry shows in the target's tooltip and in the board export,
+and crossing `CertWarnDays` raises one alert.
+
+The read deliberately records the trust verdict rather than acting on it, which is what lets it
+report an expired or self-signed certificate at all — validating normally would abort the handshake
+and yield "TLS failed", telling you the one thing you already suspected and none of the detail you
+need.
+
+### Export
+
+⚙ → **Export…**, in three shapes, because they answer different questions and merging them would
+give a spreadsheet that cannot usefully be sorted by anything:
+
+| | |
+|---|---|
+| **Board** | one row per target — status, latency, jitter, loss, 24h/7d/30d availability, certificate |
+| **Outages** | one row per outage, with start, end and duration |
+| **History** | one row per retained probe sample |
+
+The point is usually not analysis, it is evidence: an ISP or a supplier disputing that anything was
+ever wrong, answered with a file listing every drop and its duration rather than a screenshot of a
+board showing the present moment.
+
 ### Alerting
 
 A tray balloon only reaches you while you are sitting in front of the machine — which is exactly

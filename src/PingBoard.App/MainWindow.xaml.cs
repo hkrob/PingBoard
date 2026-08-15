@@ -449,6 +449,11 @@ public sealed partial class MainWindow : Window
     {
         if (!Vm.Settings.NotifyOnChange) return;
 
+        // Soft transitions are opt-in and off by default. A host that is merely slow is a thing to
+        // notice on the board, not a thing to be interrupted by — and the outage log records it
+        // either way, so nothing is lost by staying quiet.
+        if (transition.Kind != TransitionKind.Hard && !Vm.Settings.NotifyOnDegraded) return;
+
         // Muted suppresses the popup only. Webhook and email alerting is left running on purpose:
         // it exists to reach you when you are away from this machine, and silencing it because
         // someone quietened a desktop toast would be the opposite of what they asked for.
@@ -456,18 +461,46 @@ public sealed partial class MainWindow : Window
 
         // Transitions only, never individual failed probes — and the engine emits none at all
         // while suspended, so waking from sleep is silent rather than a burst of forty toasts.
-        var title = transition.Up
-            ? $"{transition.TargetName} recovered"
-            : $"{transition.TargetName} is down";
+        var (title, body) = transition.Kind switch
+        {
+            TransitionKind.Certificate => (
+                $"{transition.TargetName} certificate expiring",
+                CertificateBody(transition)),
 
-        var body = transition.Up
-            ? $"Back up after {TargetRow.FormatSpan(transition.DownFor)}."
+            TransitionKind.Degraded when transition.Up => (
+                $"{transition.TargetName} back to normal",
+                $"Within its thresholds again after {TargetRow.FormatSpan(transition.DownFor)}."),
+
+            TransitionKind.Degraded => (
+                $"{transition.TargetName} is degraded",
+                "Still replying, but past its latency or loss threshold."),
+
+            _ when transition.Up => (
+                $"{transition.TargetName} recovered",
+                $"Back up after {TargetRow.FormatSpan(transition.DownFor)}."),
+
             // Threshold comes from the transition, not from global settings — this target may
             // have its own, and quoting the global would report a number never applied to it.
-            : $"{transition.Status.Label()} after {transition.Threshold} consecutive attempts.";
+            _ => (
+                $"{transition.TargetName} is down",
+                $"{transition.Status.Label()} after {transition.Threshold} consecutive attempts."),
+        };
 
         // Toast first; tray balloon when the App SDK path is unavailable, which is the normal case
         // under self-contained deployment. Exactly one of the two fires.
         if (!Notifications.Show(title, body)) _tray?.Flash(title, body);
+    }
+
+    /// <summary>
+    /// For a certificate transition <c>DownFor</c> carries the time remaining, not time elapsed,
+    /// and goes negative once expiry has passed.
+    /// </summary>
+    private static string CertificateBody(in StateTransition transition)
+    {
+        var remaining = transition.DownFor;
+
+        return remaining <= TimeSpan.Zero
+            ? $"The TLS certificate expired {TargetRow.FormatSpan(-remaining)} ago."
+            : $"The TLS certificate expires in {(int)remaining.TotalDays} days.";
     }
 }

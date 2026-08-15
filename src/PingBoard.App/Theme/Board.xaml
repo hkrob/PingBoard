@@ -18,6 +18,7 @@
             <SolidColorBrush x:Key="StatusUnreachableBrush" Color="#FF7A6B" />
             <SolidColorBrush x:Key="StatusDnsBrush"         Color="#FF8FD4" />
             <SolidColorBrush x:Key="StatusRefusedBrush"     Color="#FFA26B" />
+            <SolidColorBrush x:Key="StatusDegradedBrush"    Color="#7FD4FF" />
             <SolidColorBrush x:Key="StatusIdleBrush"        Color="#8A8F98" />
             <SolidColorBrush x:Key="SparkOkBrush"           Color="#3FA46A" />
             <SolidColorBrush x:Key="SparkBadBrush"          Color="#C0483A" />
@@ -31,6 +32,7 @@
             <SolidColorBrush x:Key="StatusUnreachableBrush" Color="#B3261E" />
             <SolidColorBrush x:Key="StatusDnsBrush"         Color="#A5217F" />
             <SolidColorBrush x:Key="StatusRefusedBrush"     Color="#A34700" />
+            <SolidColorBrush x:Key="StatusDegradedBrush"    Color="#0A5E86" />
             <SolidColorBrush x:Key="StatusIdleBrush"        Color="#5D6169" />
             <SolidColorBrush x:Key="SparkOkBrush"           Color="#2E9C5E" />
             <SolidColorBrush x:Key="SparkBadBrush"          Color="#C0483A" />
@@ -44,6 +46,7 @@
             <SolidColorBrush x:Key="StatusUnreachableBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
             <SolidColorBrush x:Key="StatusDnsBrush"         Color="{ThemeResource SystemColorWindowTextColor}" />
             <SolidColorBrush x:Key="StatusRefusedBrush"     Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="StatusDegradedBrush"    Color="{ThemeResource SystemColorWindowTextColor}" />
             <SolidColorBrush x:Key="StatusIdleBrush"        Color="{ThemeResource SystemColorGrayTextColor}" />
             <SolidColorBrush x:Key="SparkOkBrush"           Color="{ThemeResource SystemColorWindowTextColor}" />
             <SolidColorBrush x:Key="SparkBadBrush"          Color="{ThemeResource SystemColorHotlightColor}" />

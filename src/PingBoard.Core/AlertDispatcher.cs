@@ -75,6 +75,12 @@ public sealed class AlertDispatcher : IAsyncDisposable
     {
         var settings = _settings;
         if (!settings.AnyEnabled) return;
+
+        // Soft transitions are opt-in, and checked before the recovery rule so that turning
+        // degraded alerts off silences both halves rather than leaving the "cleared" message
+        // arriving for a condition that was never announced.
+        if (transition.Kind != TransitionKind.Hard && !settings.NotifyOnDegraded) return;
+
         if (transition.Up && !settings.NotifyOnRecovery) return;
 
         if (IsWithinCooldown(transition, settings)) return;

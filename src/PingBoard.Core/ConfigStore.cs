@@ -67,6 +67,13 @@ public static class ConfigStore
             settings.TraceOnFailure = s.GetBool(nameof(Settings.TraceOnFailure), settings.TraceOnFailure);
             settings.TraceMaxHops = s.GetInt(nameof(Settings.TraceMaxHops), settings.TraceMaxHops);
             settings.TraceHopTimeoutMs = s.GetInt(nameof(Settings.TraceHopTimeoutMs), settings.TraceHopTimeoutMs);
+            settings.DegradedLatencyMs = s.GetInt(nameof(Settings.DegradedLatencyMs), settings.DegradedLatencyMs);
+            settings.DegradedLossPercent = s.GetDouble(nameof(Settings.DegradedLossPercent), settings.DegradedLossPercent);
+            settings.DegradedSamples = s.GetInt(nameof(Settings.DegradedSamples), settings.DegradedSamples);
+            settings.NotifyOnDegraded = s.GetBool(nameof(Settings.NotifyOnDegraded), settings.NotifyOnDegraded);
+            settings.OutageLogEnabled = s.GetBool(nameof(Settings.OutageLogEnabled), settings.OutageLogEnabled);
+            settings.CertCheckHours = s.GetInt(nameof(Settings.CertCheckHours), settings.CertCheckHours);
+            settings.CertWarnDays = s.GetInt(nameof(Settings.CertWarnDays), settings.CertWarnDays);
         }
 
         // The file may have been hand-edited into nonsense; clamp before anything uses it.
@@ -89,6 +96,7 @@ public static class ConfigStore
             alerts.EmailTo = a.GetString(nameof(AlertSettings.EmailTo), "");
             alerts.MinIntervalSeconds = a.GetInt(nameof(AlertSettings.MinIntervalSeconds), alerts.MinIntervalSeconds);
             alerts.NotifyOnRecovery = a.GetBool(nameof(AlertSettings.NotifyOnRecovery), true);
+            alerts.NotifyOnDegraded = a.GetBool(nameof(AlertSettings.NotifyOnDegraded), false);
             alerts.TimeoutMs = a.GetInt(nameof(AlertSettings.TimeoutMs), alerts.TimeoutMs);
         }
 
@@ -166,6 +174,13 @@ public static class ConfigStore
                 PayloadBytes = ClampOrNull(section.GetIntOrNull(nameof(TargetConfig.PayloadBytes)), 0, 65_500),
                 Ttl = ClampOrNull(section.GetIntOrNull(nameof(TargetConfig.Ttl)), 1, 255),
 
+                // Zero is preserved rather than clamped away: it is how a target switches the
+                // degraded state off for itself when the global default has it on.
+                DegradedLatencyMs = ClampOrNull(
+                    section.GetIntOrNull(nameof(TargetConfig.DegradedLatencyMs)), 0, 600_000),
+                DegradedLossPercent = ClampOrNull(
+                    section.GetDoubleOrNull(nameof(TargetConfig.DegradedLossPercent)), 0, 100),
+
                 // A hand-edited 0 would mean "alert before any failure", which the record logic
                 // cannot express.
                 FailuresBeforeDown = ClampOrNull(
@@ -230,6 +245,9 @@ public static class ConfigStore
     private static int? ClampOrNull(int? value, int min, int max) =>
         value is { } v ? Math.Clamp(v, min, max) : null;
 
+    private static double? ClampOrNull(double? value, double min, double max) =>
+        value is { } v ? Math.Clamp(v, min, max) : null;
+
     /// <summary>
     /// Writes the <c>[Alerts]</c> section, or copies the existing one across verbatim when the
     /// caller passed none. Secrets are re-protected on the way out, so a password hand-typed into
@@ -270,6 +288,7 @@ public static class ConfigStore
         section.Set(nameof(AlertSettings.EmailTo), alerts.EmailTo);
         section.Set(nameof(AlertSettings.MinIntervalSeconds), alerts.MinIntervalSeconds);
         section.Set(nameof(AlertSettings.NotifyOnRecovery), alerts.NotifyOnRecovery);
+        section.Set(nameof(AlertSettings.NotifyOnDegraded), alerts.NotifyOnDegraded);
         section.Set(nameof(AlertSettings.TimeoutMs), alerts.TimeoutMs);
     }
 
@@ -311,6 +330,13 @@ public static class ConfigStore
         s.Set(nameof(Settings.TraceOnFailure), settings.TraceOnFailure);
         s.Set(nameof(Settings.TraceMaxHops), settings.TraceMaxHops);
         s.Set(nameof(Settings.TraceHopTimeoutMs), settings.TraceHopTimeoutMs);
+        s.Set(nameof(Settings.DegradedLatencyMs), settings.DegradedLatencyMs);
+        s.Set(nameof(Settings.DegradedLossPercent), settings.DegradedLossPercent);
+        s.Set(nameof(Settings.DegradedSamples), settings.DegradedSamples);
+        s.Set(nameof(Settings.NotifyOnDegraded), settings.NotifyOnDegraded);
+        s.Set(nameof(Settings.OutageLogEnabled), settings.OutageLogEnabled);
+        s.Set(nameof(Settings.CertCheckHours), settings.CertCheckHours);
+        s.Set(nameof(Settings.CertWarnDays), settings.CertWarnDays);
 
         WriteAlerts(ini, path, alerts);
         WriteTabs(ini, path, tabs);
@@ -347,6 +373,8 @@ public static class ConfigStore
             section.SetOptional(nameof(TargetConfig.PayloadBytes), t.PayloadBytes);
             section.SetOptional(nameof(TargetConfig.Ttl), t.Ttl);
             section.SetOptional(nameof(TargetConfig.FailuresBeforeDown), t.FailuresBeforeDown);
+            section.SetOptional(nameof(TargetConfig.DegradedLatencyMs), t.DegradedLatencyMs);
+            section.SetOptional(nameof(TargetConfig.DegradedLossPercent), t.DegradedLossPercent);
         }
 
         ini.SaveAtomic(path);

@@ -57,4 +57,15 @@ public static class AppPaths
     public static string UiStateFile { get; } = System.IO.Path.Combine(DataDirectory, "ui-state.ini");
 
     public static string DefaultConfigFile { get; } = System.IO.Path.Combine(DataDirectory, "config.ini");
+
+    /// <summary>
+    /// The application's own transition history, feeding the outage window.
+    /// <para>
+    /// Fixed here rather than following the config file, unlike the events CSV. The events CSV is a
+    /// document about one board and belongs beside it; this is the app remembering what it saw, and
+    /// a board opened from a USB stick should not lose its outage history because the stick was
+    /// unplugged.
+    /// </para>
+    /// </summary>
+    public static string OutageFile { get; } = System.IO.Path.Combine(DataDirectory, "outages.csv");
 }

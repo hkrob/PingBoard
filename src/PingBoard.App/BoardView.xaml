@@ -184,7 +184,10 @@
                             <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE792;" /></MenuFlyoutItem.Icon>
                         </MenuFlyoutItem>
                         <MenuFlyoutSeparator />
-                        <MenuFlyoutItem Text="Export board to CSV…" Click="OnExportCsv">
+                        <MenuFlyoutItem Text="Outage log…" Click="OnOutageLog">
+                            <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE81C;" /></MenuFlyoutItem.Icon>
+                        </MenuFlyoutItem>
+                        <MenuFlyoutItem Text="Export…" Click="OnExportCsv">
                             <MenuFlyoutItem.Icon><FontIcon Glyph="&#xEDE1;" /></MenuFlyoutItem.Icon>
                         </MenuFlyoutItem>
                         <MenuFlyoutItem Text="Open config folder" Click="OnOpenLogFolder">

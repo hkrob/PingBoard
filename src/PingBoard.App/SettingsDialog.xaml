@@ -67,9 +67,36 @@
 
             <CheckBox x:Name="NotifyCheck" Content="Notify on state change (down and recovered only)" />
             <CheckBox x:Name="LogCheck" Content="Log transitions to CSV" />
+            <CheckBox x:Name="OutageLogCheck" Content="Keep an outage log that survives restarts" />
             <TextBox x:Name="LogPathBox" Header="Log file" PlaceholderText="pingboard-events.csv" />
             <TextBlock FontSize="12" Opacity="0.65" TextWrapping="Wrap"
                        Text="A relative path is resolved next to the config file. Only transitions are logged, never individual probes — the log stays a few lines a week rather than millions." />
+
+            <TextBlock Text="Degraded" FontWeight="SemiBold" Margin="0,6,0,0" />
+            <StackPanel Orientation="Horizontal" Spacing="12">
+                <NumberBox x:Name="DegradedLatencyBox" Header="Latency over (ms)" Width="190"
+                           Minimum="0" Maximum="600000" SpinButtonPlacementMode="Inline" />
+                <NumberBox x:Name="DegradedLossBox" Header="Loss over (%)" Width="190"
+                           Minimum="0" Maximum="100" SpinButtonPlacementMode="Inline" />
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Spacing="12">
+                <NumberBox x:Name="DegradedSamplesBox" Header="Averaged over N probes" Width="190"
+                           Minimum="3" Maximum="1000" SpinButtonPlacementMode="Inline" />
+                <CheckBox x:Name="NotifyDegradedCheck" Content="Notify when degraded"
+                          VerticalAlignment="Bottom" Margin="0,0,0,6" />
+            </StackPanel>
+            <TextBlock FontSize="12" Opacity="0.65" TextWrapping="Wrap"
+                       Text="Zero means off, which is the default for both. A host that is still replying but slow shows as DEGRADED rather than green. These are global defaults and are usually the wrong number for any particular host — 60 ms is a broken LAN and an excellent link to another continent — so set them per target where it matters." />
+
+            <TextBlock Text="Certificates" FontWeight="SemiBold" Margin="0,6,0,0" />
+            <StackPanel Orientation="Horizontal" Spacing="12">
+                <NumberBox x:Name="CertWarnBox" Header="Warn N days before expiry" Width="190"
+                           Minimum="1" Maximum="365" SpinButtonPlacementMode="Inline" />
+                <NumberBox x:Name="CertCheckBox" Header="Re-check every N hours" Width="190"
+                           Minimum="1" Maximum="720" SpinButtonPlacementMode="Inline" />
+            </StackPanel>
+            <TextBlock FontSize="12" Opacity="0.65" TextWrapping="Wrap"
+                       Text="HTTPS targets only. The certificate is read on its own connection rather than on every probe, and the expiry date shows in the target's tooltip." />
 
             <!-- Webhook and email were configurable only by hand-editing the ini, which made a
                  shipped feature effectively invisible. Collapsed by default so the dialog does not
@@ -108,6 +135,11 @@
                         <CheckBox x:Name="NotifyRecoveryCheck" Content="Also alert on recovery"
                                   VerticalAlignment="Bottom" Margin="0,0,0,6" />
                     </StackPanel>
+
+                    <CheckBox x:Name="NotifyDegradedRemoteCheck"
+                              Content="Also send degraded and certificate alerts" />
+                    <TextBlock FontSize="12" Opacity="0.65" TextWrapping="Wrap"
+                               Text="Separate from the desktop toggle above. A notification here is glanceable and costs a second; these usually land in a channel somebody is on call for." />
 
                     <StackPanel Orientation="Horizontal" Spacing="12">
                         <Button x:Name="TestAlertButton" Content="Send a test alert" Click="OnSendTestAlert" />

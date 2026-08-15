@@ -50,7 +50,7 @@ public sealed class TransitionLog : IDisposable
         var line = string.Join(',',
             transition.When.ToString("o", CultureInfo.InvariantCulture),
             Escape(transition.TargetName),
-            transition.Up ? "recovered" : "down",
+            EventName(transition),
             transition.Status.Label(),
             transition.Up
                 ? transition.DownFor.TotalSeconds.ToString("F1", CultureInfo.InvariantCulture)
@@ -123,6 +123,19 @@ public sealed class TransitionLog : IDisposable
         File.Move(_path, _path + ".1", overwrite: true);
         File.WriteAllText(_path, Header + Environment.NewLine, Encoding.UTF8);
     }
+
+    /// <summary>
+    /// Soft transitions are carried as extra values in the existing <c>event</c> column rather
+    /// than as a new column. A new column would leave every row written before this build sitting
+    /// under the wrong headings in the same file, and a log you cannot open in a spreadsheet years
+    /// later is not a log — whereas an unfamiliar value in a known column costs a reader nothing.
+    /// </summary>
+    private static string EventName(in StateTransition t) => t.Kind switch
+    {
+        TransitionKind.Degraded => t.Up ? "degraded_cleared" : "degraded",
+        TransitionKind.Certificate => "cert_expiring",
+        _ => t.Up ? "recovered" : "down",
+    };
 
     private static string Escape(string value) =>
         value.Contains(',', StringComparison.Ordinal) || value.Contains('"', StringComparison.Ordinal)

@@ -26,9 +26,17 @@ public sealed partial class SettingsDialog : ContentDialog
         FailuresBox.Value = current.FailuresBeforeDown;
         SettleBox.Value = current.ResumeSettleMs;
 
+        DegradedLatencyBox.Value = current.DegradedLatencyMs;
+        DegradedLossBox.Value = current.DegradedLossPercent;
+        DegradedSamplesBox.Value = current.DegradedSamples;
+        CertWarnBox.Value = current.CertWarnDays;
+        CertCheckBox.Value = current.CertCheckHours;
+
         PreferIPv4Check.IsChecked = current.PreferIPv4;
         NotifyCheck.IsChecked = current.NotifyOnChange;
+        NotifyDegradedCheck.IsChecked = current.NotifyOnDegraded;
         LogCheck.IsChecked = current.LogEnabled;
+        OutageLogCheck.IsChecked = current.OutageLogEnabled;
         LogPathBox.Text = current.LogPath;
 
         LoadAlerts(alerts);
@@ -66,6 +74,7 @@ public sealed partial class SettingsDialog : ContentDialog
 
         MinIntervalBox.Value = alerts.MinIntervalSeconds;
         NotifyRecoveryCheck.IsChecked = alerts.NotifyOnRecovery;
+        NotifyDegradedRemoteCheck.IsChecked = alerts.NotifyOnDegraded;
     }
 
     private AlertSettings BuildAlerts(AlertSettings current)
@@ -87,6 +96,7 @@ public sealed partial class SettingsDialog : ContentDialog
 
         alerts.MinIntervalSeconds = Read(MinIntervalBox, current.MinIntervalSeconds);
         alerts.NotifyOnRecovery = NotifyRecoveryCheck.IsChecked == true;
+        alerts.NotifyOnDegraded = NotifyDegradedRemoteCheck.IsChecked == true;
 
         // Validate clamps the numbers and switches off any sink with nowhere to send, which is the
         // failure mode worth catching here: enabled, misconfigured, and silent.
@@ -146,9 +156,17 @@ public sealed partial class SettingsDialog : ContentDialog
         settings.FailuresBeforeDown = Read(FailuresBox, current.FailuresBeforeDown);
         settings.ResumeSettleMs = Read(SettleBox, current.ResumeSettleMs);
 
+        settings.DegradedLatencyMs = Read(DegradedLatencyBox, current.DegradedLatencyMs);
+        settings.DegradedLossPercent = ReadDouble(DegradedLossBox, current.DegradedLossPercent);
+        settings.DegradedSamples = Read(DegradedSamplesBox, current.DegradedSamples);
+        settings.CertWarnDays = Read(CertWarnBox, current.CertWarnDays);
+        settings.CertCheckHours = Read(CertCheckBox, current.CertCheckHours);
+
         settings.PreferIPv4 = PreferIPv4Check.IsChecked == true;
         settings.NotifyOnChange = NotifyCheck.IsChecked == true;
+        settings.NotifyOnDegraded = NotifyDegradedCheck.IsChecked == true;
         settings.LogEnabled = LogCheck.IsChecked == true;
+        settings.OutageLogEnabled = OutageLogCheck.IsChecked == true;
 
         var logPath = LogPathBox.Text.Trim();
         settings.LogPath = logPath.Length > 0 ? logPath : current.LogPath;
@@ -160,4 +178,11 @@ public sealed partial class SettingsDialog : ContentDialog
 
     private static int Read(NumberBox box, int fallback) =>
         double.IsNaN(box.Value) ? fallback : (int)box.Value;
+
+    /// <summary>
+    /// As <see cref="Read(NumberBox, int)"/>, but keeps the fraction. The loss threshold is the one
+    /// setting here where half a percent is a meaningful distinction.
+    /// </summary>
+    private static double ReadDouble(NumberBox box, double fallback) =>
+        double.IsNaN(box.Value) ? fallback : box.Value;
 }

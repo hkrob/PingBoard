@@ -32,6 +32,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     private ProbeScheduler _scheduler;
     private SystemWatcher? _watcher;
     private TransitionLog? _log;
+    private OutageStore? _outages;
     private AlertDispatcher? _alerts;
     private Settings _settings;
 
@@ -214,6 +215,14 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
         _log = _settings.LogEnabled ? new TransitionLog(ResolveLogPath()) : null;
 
+        // Loaded before probing starts, so the outage window has the previous run's history the
+        // first time it is opened rather than only after something new happens. This is also what
+        // lets the "while you were away" banner span a restart: the journal it summarises used to
+        // begin empty every launch, so an outage that happened while the app was closed left no
+        // trace anywhere the user would ever see it.
+        _outages = _settings.OutageLogEnabled ? new OutageStore(AppPaths.OutageFile) : null;
+        if (_outages is not null) Journal.Restore(_outages.Load());
+
         // Constructed unconditionally, even with every sink disabled: Enqueue is a cheap early
         // return in that case, and having the dispatcher already there means enabling a sink from
         // the settings dialog takes effect immediately instead of at the next config reload.
@@ -267,6 +276,9 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
         _log?.Dispose();
         _log = null;
+
+        // Nothing to flush: every transition was appended as it happened.
+        _outages = null;
     }
 
     // ---------------------------------------------------------------- refresh
@@ -334,11 +346,40 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     /// </summary>
     public TransitionJournal Journal { get; } = new();
 
+    /// <summary>Recorded outages, newest first.</summary>
+    public IReadOnlyList<Outage> Outages() => Journal.Outages(DateTimeOffset.Now);
+
+    /// <summary>
+    /// Forgets every recorded outage, on disk as well as in memory. The events CSV is deliberately
+    /// left alone — it is the copy kept for evidence, and a button in the app should not be able to
+    /// erase that.
+    /// </summary>
+    public void ClearOutages()
+    {
+        Journal.Clear();
+        _outages?.Rewrite([]);
+    }
+
+    public string ExportOutages() => Export.Outages(Outages());
+
+    public string ExportBoard() => Export.Board(_scheduler.Targets, DateTimeOffset.Now);
+
+    public string ExportHistory() => Export.History(_scheduler.Targets);
+
     private void OnTransition(StateTransition transition)
     {
         _countersDirty = true;
         _log?.Write(transition);
         Journal.Add(transition);
+
+        // Appended one line at a time rather than rewritten, so a power cut costs the last
+        // transition instead of the whole file. Compaction happens when the file has grown past
+        // twice what the journal can hold, which on a healthy board is never.
+        if (_outages is not null)
+        {
+            _outages.Append(transition);
+            if (_outages.NeedsCompaction) _outages.Rewrite(Journal.Snapshot());
+        }
 
         // Queued, not sent, and deliberately from this threadpool thread rather than the
         // dispatcher: an unreachable SMTP server blocks for its full TCP timeout, and putting that
@@ -790,6 +831,11 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         _log?.Dispose();
         _log = settings.LogEnabled ? new TransitionLog(ResolveLogPath()) : null;
 
+        // Switching the outage log back on reattaches to the existing file rather than reloading
+        // it: the journal in memory is the authority for this session, and re-reading would
+        // duplicate everything already in it.
+        _outages = settings.OutageLogEnabled ? _outages ?? new OutageStore(AppPaths.OutageFile) : null;
+
         SaveConfig();
     }
 
@@ -849,38 +895,16 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         }
     }
 
-    public string ToCsv()
-    {
-        var sb = new System.Text.StringBuilder();
-        sb.AppendLine("Name,Address,IP,Hostname,Status,RTTms,LossPercent,AvgMs,MinMs,MaxMs,OK,NOK,LastOK,LastNOK");
-
-        foreach (var row in Rows)
-        {
-            var s = row.Snapshot;
-            sb.Append(Csv(s.Name)).Append(',')
-              .Append(Csv(s.Address)).Append(',')
-              .Append(Csv(s.DisplayIp)).Append(',')
-              .Append(Csv(s.DisplayHostname)).Append(',')
-              .Append(Csv(s.Status.Label())).Append(',')
-              .Append(s.LastRttMs >= 0 ? s.LastRttMs.ToString(CultureInfo.InvariantCulture) : "").Append(',')
-              .Append(s.Stats.HasData ? s.Stats.LossPercent.ToString("F2", CultureInfo.InvariantCulture) : "").Append(',')
-              .Append(s.Stats.OkSamples > 0 ? s.Stats.AvgMs.ToString("F1", CultureInfo.InvariantCulture) : "").Append(',')
-              .Append(s.Stats.OkSamples > 0 ? s.Stats.MinMs.ToString(CultureInfo.InvariantCulture) : "").Append(',')
-              .Append(s.Stats.OkSamples > 0 ? s.Stats.MaxMs.ToString(CultureInfo.InvariantCulture) : "").Append(',')
-              .Append(s.OkCount.ToString(CultureInfo.InvariantCulture)).Append(',')
-              .Append(s.NokCount.ToString(CultureInfo.InvariantCulture)).Append(',')
-              .Append(s.LastOk?.ToString("o", CultureInfo.InvariantCulture) ?? "").Append(',')
-              .Append(s.LastNok?.ToString("o", CultureInfo.InvariantCulture) ?? "")
-              .AppendLine();
-        }
-
-        return sb.ToString();
-
-        static string Csv(string value) =>
-            value.Contains(',', StringComparison.Ordinal) || value.Contains('"', StringComparison.Ordinal)
-                ? '"' + value.Replace("\"", "\"\"", StringComparison.Ordinal) + '"'
-                : value;
-    }
+    /// <summary>
+    /// The board as CSV.
+    /// <para>
+    /// Now a thin wrapper over <see cref="Export.Board"/>, which writes the same rows plus the
+    /// columns this had grown to omit — tab, probe kind, jitter, the rolling availability figures
+    /// and certificate expiry. The hand-rolled version here predated all of them and had quietly
+    /// become an export of the board as it looked several versions ago.
+    /// </para>
+    /// </summary>
+    public string ToCsv() => ExportBoard();
 
     public async ValueTask DisposeAsync()
     {

@@ -102,6 +102,15 @@
                                HorizontalAlignment="Left" />
                     <TextBlock FontSize="12" Opacity="0.65" TextWrapping="Wrap"
                                Text="How many consecutive failures before this host is declared down. Only meaningful relative to its interval — three failures at 5000 ms is fifteen seconds of silence, but at 1000 ms it is three. Raise it for a link that drops the odd packet; lower it for something that should never miss one." />
+
+                    <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,6,0,0">
+                        <NumberBox x:Name="DegradedLatencyBox" Header="Degraded over (ms)" Width="190"
+                                   Minimum="0" Maximum="600000" SpinButtonPlacementMode="Inline" />
+                        <NumberBox x:Name="DegradedLossBox" Header="Degraded over (% loss)" Width="190"
+                                   Minimum="0" Maximum="100" SpinButtonPlacementMode="Inline" />
+                    </StackPanel>
+                    <TextBlock FontSize="12" Opacity="0.65" TextWrapping="Wrap"
+                               Text="Blank inherits the global default; zero switches the degraded state off for this host even when the default is on. This is where these numbers belong — 'too slow' is a statement about one link, and the same threshold cannot be right for a switch in the next room and a server in another country." />
                 </StackPanel>
             </Expander>
 
