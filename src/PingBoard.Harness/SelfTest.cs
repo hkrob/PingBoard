@@ -1770,6 +1770,18 @@ internal static class SelfTest
         store.Rewrite([reloaded[0]]);
         Check("outage store: rewrite replaces the file", new OutageStore(path).Load().Count == 1);
 
+        // Two boards must not share one outage log, or each would open showing the other's hosts.
+        var boardA = ConfigStore.OutagePathFor(Path.Combine(dir, "home.ini"));
+        var boardB = ConfigStore.OutagePathFor(Path.Combine(dir, "work.ini"));
+
+        Check("outage store: each board gets its own file", boardA != boardB);
+        Check("outage store: the sidecar sits beside its config",
+            Path.GetDirectoryName(boardA) == Path.GetFullPath(dir).TrimEnd(Path.DirectorySeparatorChar));
+        Check("outage store: named after the board",
+            Path.GetFileName(boardA) == "home.outages.csv");
+        Check("outage store: and does not collide with the counters sidecar",
+            boardA != ConfigStore.StatePathFor(Path.Combine(dir, "home.ini")));
+
         // An unwritable path must never throw into the probe loop.
         var blocked = new OutageStore(Path.Combine(dir, "no-such-dir\0bad", "x.csv"));
         blocked.Append(new StateTransition("x", false, when, TimeSpan.Zero, TargetStatus.Timeout, 3));

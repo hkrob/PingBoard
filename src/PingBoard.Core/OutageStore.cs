@@ -15,8 +15,10 @@ namespace PingBoard.Core;
 /// breaks the feature.
 /// </para>
 /// <para>
-/// This file is the opposite: fixed name, fixed location beside the rest of the state, exact
-/// round-trip, and bounded. Nobody is expected to read it.
+/// This file is the opposite: a sidecar beside the board's own config, exact round-trip, and
+/// bounded. Nobody is expected to read it. It sits beside the config rather than beside the
+/// application because two boards are supported side by side, and one shared file would have each
+/// of them loading the other's outages — see <see cref="ConfigStore.OutagePathFor"/>.
 /// </para>
 /// </summary>
 public sealed class OutageStore

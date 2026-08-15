@@ -220,7 +220,9 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         // lets the "while you were away" banner span a restart: the journal it summarises used to
         // begin empty every launch, so an outage that happened while the app was closed left no
         // trace anywhere the user would ever see it.
-        _outages = _settings.OutageLogEnabled ? new OutageStore(AppPaths.OutageFile) : null;
+        _outages = _settings.OutageLogEnabled
+            ? new OutageStore(ConfigStore.OutagePathFor(ConfigPath))
+            : null;
         if (_outages is not null) Journal.Restore(_outages.Load());
 
         // Constructed unconditionally, even with every sink disabled: Enqueue is a cheap early
@@ -834,7 +836,9 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         // Switching the outage log back on reattaches to the existing file rather than reloading
         // it: the journal in memory is the authority for this session, and re-reading would
         // duplicate everything already in it.
-        _outages = settings.OutageLogEnabled ? _outages ?? new OutageStore(AppPaths.OutageFile) : null;
+        _outages = settings.OutageLogEnabled
+            ? _outages ?? new OutageStore(ConfigStore.OutagePathFor(ConfigPath))
+            : null;
 
         SaveConfig();
     }

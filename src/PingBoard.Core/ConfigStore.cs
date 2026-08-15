@@ -381,11 +381,26 @@ public static class ConfigStore
     }
 
     /// <summary>Sidecar path for persisted counters: <c>config.ini</c> → <c>config.state.ini</c>.</summary>
-    public static string StatePathFor(string configPath)
+    public static string StatePathFor(string configPath) => SidecarFor(configPath, ".state.ini");
+
+    /// <summary>
+    /// Sidecar path for the outage log: <c>config.ini</c> → <c>config.outages.csv</c>.
+    /// <para>
+    /// Keyed to the board rather than fixed beside the application, and the distinction matters
+    /// because two boards are explicitly supported side by side — <c>--config</c> keys the
+    /// single-instance guard precisely so they can be. A fixed path would have them writing to one
+    /// file and each loading the other's outages at startup, so a board would open showing hosts it
+    /// has never heard of. Counters and history already live beside their config for the same
+    /// reason; an outage belongs to the board that recorded it, not to the machine.
+    /// </para>
+    /// </summary>
+    public static string OutagePathFor(string configPath) => SidecarFor(configPath, ".outages.csv");
+
+    private static string SidecarFor(string configPath, string suffix)
     {
         var directory = Path.GetDirectoryName(Path.GetFullPath(configPath)) ?? ".";
         var stem = Path.GetFileNameWithoutExtension(configPath);
-        return Path.Combine(directory, stem + ".state.ini");
+        return Path.Combine(directory, stem + suffix);
     }
 }
 
