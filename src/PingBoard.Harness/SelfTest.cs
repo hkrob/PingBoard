@@ -1756,6 +1756,22 @@ internal static class SelfTest
         var noCn = healthy with { Subject = "O=Example Ltd" };
         Check("cert: a subject without a CN falls back to the whole string",
             noCn.ShortSubject == "O=Example Ltd");
+
+        // The two board columns are driven entirely by these three calls, so the distinction the
+        // columns depend on is asserted here: "expiring" must be answerable only when there is a
+        // certificate to answer about. A target with none is not a target whose certificate is
+        // fine, and a column printing "no" for an ICMP host reads as a clean bill of health.
+        Check("cert columns: a present certificate answers yes or no",
+            healthy.HasCertificate && soon.HasCertificate);
+        Check("cert columns: an absent certificate answers neither",
+            !failed.HasCertificate && !CertificateInfo.Failed("timed out", now).HasCertificate);
+        Check("cert columns: the day count is what the column prints",
+            healthy.DaysRemaining(now) == 60 && expired.DaysRemaining(now) == -2);
+
+        // The warning window is a setting the user can change while the board runs; the same
+        // certificate must answer differently as it moves.
+        Check("cert columns: the same certificate follows the configured window",
+            !healthy.IsExpiring(now, 14) && healthy.IsExpiring(now, 90));
     }
 
     private static void CertificateWarnsOnce()

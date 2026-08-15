@@ -45,11 +45,26 @@ public sealed class ColumnLayout : INotifyPropertyChanged
         [nameof(Avail24h)] = 78,
         [nameof(Avail7d)] = 78,
         [nameof(Avail30d)] = 78,
+        [nameof(CertExpiring)] = 76,
+        [nameof(CertDays)] = 76,
     };
 
-    /// <summary>Hidden by default: the six requested columns plus RTT, loss and history stay on.</summary>
+    /// <summary>
+    /// Hidden on a fresh install: the six original ones plus the two certificate columns, which
+    /// only ever say anything for an HTTPS target and would otherwise be two columns of dashes on
+    /// a board of pings.
+    /// <para>
+    /// This governs a first run only. An existing board restores <see cref="HiddenCsv"/>, which
+    /// names the columns that were hidden when it was written and so cannot mention a column that
+    /// did not exist yet — a new column therefore appears on an existing board and stays out of the
+    /// way on a new one, which is the right behaviour in both cases.
+    /// </para>
+    /// </summary>
     public static readonly string[] DefaultHidden =
-        [nameof(AvgMinMax), nameof(Fails), nameof(Uptime), nameof(Probe), nameof(Avail7d), nameof(Avail30d)];
+    [
+        nameof(AvgMinMax), nameof(Fails), nameof(Uptime), nameof(Probe),
+        nameof(Avail7d), nameof(Avail30d), nameof(CertExpiring), nameof(CertDays),
+    ];
 
     /// <summary>
     /// Shared instance. Both the header grid and the row template bind here via <c>x:Bind</c> to a
@@ -86,6 +101,8 @@ public sealed class ColumnLayout : INotifyPropertyChanged
     public GridLength Avail24h => Width(nameof(Avail24h));
     public GridLength Avail7d => Width(nameof(Avail7d));
     public GridLength Avail30d => Width(nameof(Avail30d));
+    public GridLength CertExpiring => Width(nameof(CertExpiring));
+    public GridLength CertDays => Width(nameof(CertDays));
 
     private GridLength Width([CallerMemberName] string id = "")
     {
@@ -192,6 +209,8 @@ public sealed class ColumnLayout : INotifyPropertyChanged
     public GridLength Pos15 => WidthAt(15);
     public GridLength Pos16 => WidthAt(16);
     public GridLength Pos17 => WidthAt(17);
+    public GridLength Pos18 => WidthAt(18);
+    public GridLength Pos19 => WidthAt(19);
 
     // Where each column currently sits.
     public int IdxStatus => IndexOf(nameof(Status));
@@ -212,6 +231,8 @@ public sealed class ColumnLayout : INotifyPropertyChanged
     public int IdxAvail24h => IndexOf(nameof(Avail24h));
     public int IdxAvail7d => IndexOf(nameof(Avail7d));
     public int IdxAvail30d => IndexOf(nameof(Avail30d));
+    public int IdxCertExpiring => IndexOf(nameof(CertExpiring));
+    public int IdxCertDays => IndexOf(nameof(CertDays));
 
     // ------------------------------------------------------------------ auto-fit
     //
@@ -349,6 +370,8 @@ public sealed class ColumnLayout : INotifyPropertyChanged
     public Visibility Avail24hVis => Vis(nameof(Avail24h));
     public Visibility Avail7dVis => Vis(nameof(Avail7d));
     public Visibility Avail30dVis => Vis(nameof(Avail30d));
+    public Visibility CertExpiringVis => Vis(nameof(CertExpiring));
+    public Visibility CertDaysVis => Vis(nameof(CertDays));
 
     private Visibility Vis(string id) =>
         _hidden.Contains(id) ? Visibility.Collapsed : Visibility.Visible;
@@ -435,6 +458,8 @@ public sealed class ColumnLayout : INotifyPropertyChanged
         nameof(Spark) => "History",
         nameof(Uptime) => "Uptime",
         nameof(Probe) => "Probe",
+        nameof(CertExpiring) => "Expiring",
+        nameof(CertDays) => "Cert days",
         _ => id,
     };
 

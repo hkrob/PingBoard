@@ -59,6 +59,20 @@ public sealed partial class TargetRow : ObservableObject
     [ObservableProperty] public partial string Avail7d { get; private set; } = "—";
     [ObservableProperty] public partial string Avail30d { get; private set; } = "—";
     [ObservableProperty] public partial string Probe { get; private set; } = "icmp";
+
+    /// <summary>
+    /// Whether this target's certificate is inside the warning window, as a plain yes/no.
+    /// <para>
+    /// A dash rather than "no" when there is no certificate to speak of. An ICMP target is not a
+    /// target whose certificate is fine — it has none — and answering a question that was never
+    /// asked is how a column ends up being read as a clean bill of health.
+    /// </para>
+    /// </summary>
+    [ObservableProperty] public partial string CertExpiring { get; private set; } = "—";
+
+    /// <summary>Whole days until expiry, negative once past it.</summary>
+    [ObservableProperty] public partial string CertDays { get; private set; } = "—";
+
     [ObservableProperty] public partial string ThemeKey { get; private set; } = "StatusIdleBrush";
 
     /// <summary>
@@ -178,10 +192,31 @@ public sealed partial class TargetRow : ObservableObject
 
     public Visibility DownBadge => Snapshot.DownFor is not null ? Visibility.Visible : Visibility.Collapsed;
 
-    public void Refresh()
+    /// <param name="certWarnDays">
+    /// How close to expiry counts as expiring. Passed in rather than read from a static, because it
+    /// is a setting the user can change while the board is running and a copy held here would go
+    /// stale the moment they did.
+    /// </param>
+    public void Refresh(int certWarnDays = 14)
     {
         var s = Target.Snapshot();
         Snapshot = s;
+
+        var now = DateTimeOffset.Now;
+
+        if (s.Certificate is { HasCertificate: true } cert)
+        {
+            var days = cert.DaysRemaining(now);
+            CertExpiring = cert.IsExpiring(now, certWarnDays) ? "yes" : "no";
+            CertDays = days.ToString(CultureInfo.CurrentCulture);
+        }
+        else
+        {
+            // Covers both "not an HTTPS target" and "the read failed". Neither is a statement that
+            // the certificate is fine, so neither may print "no".
+            CertExpiring = "—";
+            CertDays = "—";
+        }
 
         StatusLabel = s.Status.Label();
         StatusGlyph = s.Status.Glyph();

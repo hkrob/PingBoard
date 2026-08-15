@@ -303,8 +303,23 @@ not to be woken for.
 
 HTTPS targets have their TLS certificate read every few hours, on its own connection rather than on
 every probe: a certificate changes a handful of times a year, and re-reading it every two seconds to
-watch a date not move is pure cost. Expiry shows in the target's tooltip and in the board export,
-and crossing `CertWarnDays` raises one alert.
+watch a date not move is pure cost. Crossing `CertWarnDays` raises one alert.
+
+Two columns carry it, alongside the target's tooltip and the board export:
+
+| Column | Shows |
+|---|---|
+| `Expiring` | `yes` inside the warning window or already past it, `no` otherwise |
+| `Cert days` | whole days until expiry, negative once past |
+
+Both read `—` for a target with no certificate — an ICMP host, or one whose read failed. A target
+without a certificate is not a target whose certificate is fine, and printing `no` there would read
+as a clean bill of health for something that was never checked.
+
+They are hidden on a fresh install, since they say nothing for a board of pings, and appear
+automatically on an existing board — the saved column state names what was hidden when it was
+written, and cannot mention a column that did not exist yet. ⚙ → **Columns** toggles them either
+way.
 
 The read deliberately records the trust verdict rather than acting on it, which is what lets it
 report an expired or self-signed certificate at all — validating normally would abort the handshake

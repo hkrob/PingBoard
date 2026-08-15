@@ -285,7 +285,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
     private void RefreshRows()
     {
-        foreach (var row in Rows) row.Refresh();
+        foreach (var row in Rows) row.Refresh(_settings.CertWarnDays);
 
         var up = 0;
         var down = 0;
@@ -789,7 +789,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         EnsureTab(config.Tab);
 
         row.Target.UpdateConfig(config);
-        row.Refresh();
+        row.Refresh(_settings.CertWarnDays);
 
         ApplyTabStateToTargets();
         SaveConfig();

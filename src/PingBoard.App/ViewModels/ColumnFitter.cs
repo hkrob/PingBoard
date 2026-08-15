@@ -93,7 +93,8 @@ public sealed class ColumnFitter
 
     /// <summary>Columns rendered with NumericCellStyle: monospaced and right-aligned.</summary>
     private static bool Numeric(string id) =>
-        id is "Rtt" or "AvgMinMax" or "Loss" or "Fails" or "Uptime" or "Cumulative" or "Ip";
+        id is "Rtt" or "AvgMinMax" or "Loss" or "Fails" or "Uptime" or "Cumulative" or "Ip"
+           or "Jitter" or "Avail24h" or "Avail7d" or "Avail30d" or "CertDays";
 
     /// <summary>The text a row puts in a given column. Must mirror the row template.</summary>
     private static string CellText(TargetRow row, string id) => id switch
@@ -111,6 +112,17 @@ public sealed class ColumnFitter
         "Fails" => row.Fails,
         "Uptime" => row.Uptime,
         "Probe" => row.Probe,
+
+        // These were absent, so auto-fit sized them from their header text alone and never saw the
+        // values underneath. Harmless for the availability columns, whose headers happen to be
+        // wider than "100" — and not a property to rely on, since it holds by luck rather than by
+        // anything enforcing it.
+        "Jitter" => row.Jitter,
+        "Avail24h" => row.Avail24h,
+        "Avail7d" => row.Avail7d,
+        "Avail30d" => row.Avail30d,
+        "CertExpiring" => row.CertExpiring,
+        "CertDays" => row.CertDays,
         _ => "",
     };
 }
