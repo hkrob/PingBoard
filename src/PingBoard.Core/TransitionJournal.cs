@@ -166,7 +166,14 @@ public sealed class TransitionJournal
     /// </param>
     public string? Summarise(DateTimeOffset since, DateTimeOffset now, int maxNamed = 3)
     {
-        var events = Since(since);
+        // Real outages only.
+        //
+        // Everything below reads "not up" as "went down", which was the whole vocabulary when this
+        // was written. It no longer is: a certificate transition is always Up:false and never has a
+        // matching recovery, so left unfiltered it would be counted as an outage and would leave
+        // that host marked still-down forever — the banner announcing that a host with a
+        // certificate expiring in two months "went down at 14:34 and is still down".
+        var events = Since(since).Where(e => e.Kind == TransitionKind.Hard).ToList();
         if (events.Count == 0) return null;
 
         // Per target, in the order they first appeared, so the line reads chronologically.

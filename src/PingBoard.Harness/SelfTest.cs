@@ -650,6 +650,29 @@ internal static class SelfTest
         Check("away: restore round-trips the journal",
             restored.Snapshot().Count == TransitionJournal.Capacity
             && restored.Snapshot()[^1].TargetName == flood.Snapshot()[^1].TargetName);
+
+        // Soft transitions must not be read as outages. A certificate event is always Up:false and
+        // never has a matching recovery, so counting it would both inflate the outage tally and
+        // leave that host permanently "still down" in the banner.
+        var soft = new TransitionJournal();
+        soft.Add(new StateTransition("tls", false, start, TimeSpan.FromDays(60), TargetStatus.Degraded,
+                                     200, TransitionKind.Certificate));
+        soft.Add(new StateTransition("wan", false, start, TimeSpan.Zero, TargetStatus.Degraded,
+                                     0, TransitionKind.Degraded));
+
+        Check("away: a board with only soft events reports nothing",
+            soft.Summarise(start.AddSeconds(-1), start.AddHours(1)) is null);
+
+        soft.Add(new StateTransition("gw", false, start.AddMinutes(1), TimeSpan.Zero,
+                                     TargetStatus.Timeout, 3));
+
+        var mixedLine = soft.Summarise(start.AddSeconds(-1), start.AddHours(1));
+        Check("away: a real outage alongside them is still reported",
+            mixedLine is not null && mixedLine.Contains("gw", StringComparison.Ordinal));
+        Check("away: the certificate host is not named as down",
+            mixedLine is not null && !mixedLine.Contains("tls", StringComparison.Ordinal));
+        Check("away: the degraded host is not named as down",
+            mixedLine is not null && !mixedLine.Contains("wan", StringComparison.Ordinal));
     }
 
     private static void RingBufferRolls()
@@ -1580,6 +1603,37 @@ internal static class SelfTest
 
         Check("degraded: a real outage still fires as a hard transition",
             down is { Up: false, Kind: TransitionKind.Hard });
+
+        // Restored history must not be judged. A board restarted after a week would otherwise
+        // decide a target is degraded on the strength of how it behaved last Tuesday, and alert
+        // about it - the restored samples fill the whole window before a single new probe lands.
+        using var restored = new PingTarget(
+            new TargetConfig { Name = "restored", Address = "10.0.0.5" }, settings);
+
+        var stale = new List<ProbeResult>();
+        for (var i = 0; i < 50; i++)
+            stale.Add(ProbeResult.Ok(9000, System.Net.IPAddress.Loopback, i * 1000, now.AddDays(-7)));
+
+        restored.RestoreHistory(stale);
+
+        var firstAfterRestore = restored.Record(
+            ProbeResult.Ok(9000, System.Net.IPAddress.Loopback, 1, now), 3, thresholds: thresholds);
+
+        Check("degraded: a restored window is not judged on the first new probe",
+            firstAfterRestore is null && restored.Snapshot().Status == TargetStatus.Ok);
+
+        // Once this run has supplied a full window of its own, judgement resumes normally.
+        for (var i = 0; i < thresholds.Samples; i++)
+            restored.Record(ProbeResult.Ok(9000, System.Net.IPAddress.Loopback, i * 1000, now),
+                            3, thresholds: thresholds);
+
+        Check("degraded: judgement resumes once the window is this run's own",
+            restored.Snapshot().Status == TargetStatus.Degraded);
+
+        // And the statistics themselves still span the restart, which is the whole point of
+        // persisting history - only the live verdict waits.
+        Check("degraded: restored samples still feed the displayed statistics",
+            restored.Snapshot().Stats.Samples > thresholds.Samples);
     }
 
     private static void DegradedThresholdsRoundTrip(string dir)

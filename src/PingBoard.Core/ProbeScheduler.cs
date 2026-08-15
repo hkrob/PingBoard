@@ -66,6 +66,19 @@ public sealed class ProbeScheduler : IAsyncDisposable
     private readonly SemaphoreSlim _traceSlots = new(2, 2);
 
     /// <summary>
+    /// Concurrent certificate reads, for the same reason as <see cref="_traceSlots"/>: every HTTPS
+    /// target comes due together on the first tick after startup, and a board with fifty of them
+    /// would open fifty simultaneous TLS handshakes before it had finished its first round of
+    /// probes.
+    /// <para>
+    /// Unlike a trace these <em>wait</em> for a slot rather than skipping. The due time has already
+    /// been pushed out by <see cref="PingTarget.TryBeginCertCheck"/> when we get here, so a skipped
+    /// read would not be retried for hours — and they drain in seconds.
+    /// </para>
+    /// </summary>
+    private readonly SemaphoreSlim _certSlots = new(4, 4);
+
+    /// <summary>
     /// Set while the machine is asleep or the local NIC is down. Probing halts and every target
     /// reads Suspended — the single most important guard against garbage data, because without it
     /// closing a laptop lid manufactures thousands of failures and an alert storm on wake.
@@ -470,10 +483,11 @@ public sealed class ProbeScheduler : IAsyncDisposable
     /// </summary>
     private async Task CheckCertificateAsync(PingTarget target, Settings settings)
     {
+        var ct = _cts?.Token ?? CancellationToken.None;
+        await _certSlots.WaitAsync(ct).ConfigureAwait(false);
+
         try
         {
-            var ct = _cts?.Token ?? CancellationToken.None;
-
             // Resolve through the same cache the probes use rather than forcing a lookup: an
             // address good enough to probe is good enough to open one more socket to.
             var address = target.ResolvedAddress
@@ -513,6 +527,10 @@ public sealed class ProbeScheduler : IAsyncDisposable
         {
             // Best-effort by definition.
         }
+        finally
+        {
+            _certSlots.Release();
+        }
     }
 
     /// <summary>How soon to retry a certificate read that failed outright.</summary>
@@ -535,5 +553,6 @@ public sealed class ProbeScheduler : IAsyncDisposable
         foreach (var t in Targets) t.Dispose();
         _concurrency.Dispose();
         _traceSlots.Dispose();
+        _certSlots.Dispose();
     }
 }

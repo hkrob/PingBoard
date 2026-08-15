@@ -84,32 +84,43 @@ public static class OutageLogDialog
 
         export.Click += async (_, _) =>
         {
-            var saved = await ExportDialog.SaveAsync(
-                root, "pingboard-outages", vm.ExportOutages);
-
+            var saved = await ExportDialog.SaveAsync("pingboard-outages", vm.ExportOutages, report);
             if (saved is { } path) report($"Outages exported to {path}");
         };
 
-        clear.Click += async (_, _) =>
-        {
-            // Confirmed, because it is the only destructive button in the application and the
-            // thing it destroys cannot be reconstructed from anything else the app holds.
-            var confirm = new ContentDialog
-            {
-                XamlRoot = root,
-                Title = "Clear outage history?",
-                Content = "Every recorded outage is forgotten. "
-                        + "The events CSV on disk is not touched.",
-                PrimaryButtonText = "Clear",
-                CloseButtonText = "Cancel",
-                DefaultButton = ContentDialogButton.Close,
-            };
+        // Confirmed in place, on the button itself, rather than by opening a confirmation dialog.
+        //
+        // WinUI permits exactly one ContentDialog at a time: showing a second while this one is up
+        // throws, and from an async void Click handler that exception has nowhere to go but the
+        // top of the stack. The first version of this did precisely that, so the one destructive
+        // button in the application was also the one guaranteed to crash it.
+        var armed = false;
 
-            if (await confirm.ShowAsync() != ContentDialogResult.Primary) return;
+        void Disarm()
+        {
+            armed = false;
+            clear.Content = "Clear history";
+        }
+
+        clear.Click += (_, _) =>
+        {
+            if (!armed)
+            {
+                armed = true;
+                clear.Content = "Confirm clear";
+                summary.Text = "Clearing forgets every recorded outage. The events CSV is not touched.";
+                return;
+            }
 
             vm.ClearOutages();
+            Disarm();
             Fill();
         };
+
+        // Any other interaction cancels the pending confirmation, so an armed button cannot sit
+        // waiting to be hit by a later, unrelated click.
+        list.PointerPressed += (_, _) => { if (armed) { Disarm(); Fill(); } };
+        export.Click += (_, _) => { if (armed) { Disarm(); Fill(); } };
 
         var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         buttons.Children.Add(export);

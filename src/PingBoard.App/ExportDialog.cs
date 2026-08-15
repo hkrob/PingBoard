@@ -60,7 +60,7 @@ public static class ExportDialog
             : history.IsChecked == true ? ("pingboard-history", vm.ExportHistory)
             : ("pingboard-board", vm.ExportBoard);
 
-        var saved = await SaveAsync(root, name, content);
+        var saved = await SaveAsync(name, content, report);
         if (saved is { } path) report($"Exported to {path}");
     }
 
@@ -73,7 +73,13 @@ public static class ExportDialog
     /// application allocates seriously for no reason.
     /// </para>
     /// </summary>
-    public static async Task<string?> SaveAsync(XamlRoot root, string suggestedName, Func<string> content)
+    /// <param name="report">
+    /// Where a failure goes. Deliberately a callback to the status banner rather than a dialog:
+    /// this is called from inside the outage window, and WinUI permits only one ContentDialog at a
+    /// time, so reporting an error that way would replace a failed export with a crash.
+    /// </param>
+    public static async Task<string?> SaveAsync(
+        string suggestedName, Func<string> content, Action<string> report)
     {
         try
         {
@@ -91,15 +97,7 @@ public static class ExportDialog
         catch (Exception ex)
         {
             CrashLog.Write(ex);
-
-            await new ContentDialog
-            {
-                XamlRoot = root,
-                Title = "Export failed",
-                Content = ex.Message,
-                CloseButtonText = "Close",
-            }.ShowAsync();
-
+            report($"Export failed — {ex.Message}");
             return null;
         }
     }

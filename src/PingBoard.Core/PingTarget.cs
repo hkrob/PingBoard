@@ -146,6 +146,19 @@ public sealed class PingTarget : IDisposable
     private bool _degradedFired;
 
     private long? _degradedSinceTick;
+
+    /// <summary>
+    /// Probes recorded since this process started, as opposed to those restored from the previous
+    /// run's history file.
+    /// <para>
+    /// The degraded assessment reads a window of recent samples, and after a restart that window is
+    /// full of samples from a run that may have ended a week ago. Judging on those means a target
+    /// can be declared degraded on startup because of how it behaved last Tuesday — and, worse,
+    /// alert about it. The displayed statistics are expected to span restarts and still do; only
+    /// the live judgement waits for evidence from this run.
+    /// </para>
+    /// </summary>
+    private int _samplesThisRun;
     private IPAddress? _resolved;
     private string? _reverseName;
 
@@ -377,6 +390,7 @@ public sealed class PingTarget : IDisposable
         {
             Availability.Record(result.Status, result.When);
             _history.Add(result);
+            if (_samplesThisRun < int.MaxValue) _samplesThisRun++;
             _status = result.Status;
             _icmpStatus = result.IcmpStatus;
             _lastRttMs = result.RttMs;
@@ -459,6 +473,11 @@ public sealed class PingTarget : IDisposable
             _degradedFired = false;
             return null;
         }
+
+        // Wait until the window can be filled from this run before judging anything. Restored
+        // history is the right basis for the statistics on the board and the wrong basis for a
+        // live verdict — see _samplesThisRun.
+        if (_samplesThisRun < thresholds.Samples) return null;
 
         var window = _history.RecentStats(thresholds.Samples);
 
