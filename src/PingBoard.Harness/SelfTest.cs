@@ -1718,6 +1718,59 @@ internal static class SelfTest
         Check("outages: a reconstructed outage admits it does not know the cause",
             orphan.Cause == TargetStatus.Unknown);
 
+        // The case a 96-minute soak actually produced: one flapping target generated 1,900
+        // transitions and swept the ring clean, taking with it the "went down" of a host that was
+        // still down. The outage log then showed nothing but the flapper — losing the one outage
+        // nobody had fixed yet, which is exactly when the log is worth opening.
+        var buried = new TransitionJournal();
+        buried.Add(new StateTransition("dead-host", false, start, TimeSpan.Zero, TargetStatus.Timeout, 2));
+
+        for (var i = 0; i < TransitionJournal.Capacity * 2; i++)
+        {
+            var up = i % 2 == 1;
+            buried.Add(new StateTransition("flapper", up, start.AddSeconds(i + 1),
+                up ? TimeSpan.FromSeconds(2) : TimeSpan.Zero,
+                up ? TargetStatus.Ok : TargetStatus.Timeout, 2));
+        }
+
+        Check("outages: the flapper has swept the ring",
+            buried.Snapshot().All(t => t.TargetName == "flapper"));
+
+        var afterFlood = buried.Outages(now);
+        var survivor = afterFlood.FirstOrDefault(o => o.TargetName == "dead-host");
+
+        Check("outages: an outage still running survives the flood",
+            survivor.TargetName == "dead-host" && survivor.Ongoing);
+        Check("outages: and is still aged from when it actually started",
+            survivor.Start == start && survivor.Duration == now - start);
+        Check("outages: the flapper's own closed history still ages out normally",
+            afterFlood.Count(o => o.TargetName == "flapper") < TransitionJournal.Capacity);
+
+        // Persistence must keep it too, or the file loses what the ring protects.
+        Check("outages: the persisted snapshot carries the evicted open outage",
+            buried.SnapshotForPersist().Any(t => t.TargetName == "dead-host" && !t.Up));
+        Check("outages: the plain ring snapshot still means the ring",
+            buried.Snapshot().Count == TransitionJournal.Capacity);
+
+        // And it must not survive its own recovery.
+        buried.Add(new StateTransition("dead-host", true, now, now - start, TargetStatus.Ok, 2));
+        Check("outages: recovery closes the pinned outage",
+            buried.Outages(now).Count(o => o.TargetName == "dead-host" && o.Ongoing) == 0);
+        Check("outages: and it is no longer pinned for persistence",
+            buried.SnapshotForPersist().Count(t => t.TargetName == "dead-host" && !t.Up) == 0);
+
+        // A restart must bring the pin back, or the first eviction after startup drops it again.
+        var reloaded = new TransitionJournal();
+        var withOpen = new TransitionJournal();
+        withOpen.Add(new StateTransition("still-down", false, start, TimeSpan.Zero, TargetStatus.Timeout, 2));
+        for (var i = 0; i < TransitionJournal.Capacity * 2; i++)
+            withOpen.Add(new StateTransition("noise", i % 2 == 1, start.AddSeconds(i + 1),
+                TimeSpan.Zero, TargetStatus.Timeout, 2));
+
+        reloaded.Restore(withOpen.SnapshotForPersist());
+        Check("outages: a restart restores the pin",
+            reloaded.Outages(now).Any(o => o.TargetName == "still-down" && o.Ongoing));
+
         // Degraded periods pair separately, so a host that is slow and then down keeps both.
         var mixed = new TransitionJournal();
         mixed.Add(new StateTransition("both", false, start, TimeSpan.Zero, TargetStatus.Degraded, 0,

@@ -260,10 +260,19 @@ invites exactly one follow-up — *which outages made up the 0.8%* — and until
 Transitions were recorded in two places, both of which lost them: a CSV nobody opens, and an
 in-memory journal that surfaced once as a line of banner text and was discarded at the next launch.
 
-Stored in `%AppData%\PingBoard\outages.csv`, appended a line at a time so a power cut costs the last
-transition rather than the file, and compacted when it outgrows the journal. A down and the recovery
-that closed it are stored as two rows and read as one event, because an outage that has not ended
-yet cannot be stored as a pair.
+Stored beside the board's config — `config.ini` → `config.outages.csv`, where the counters and
+history sidecars already live, so two boards running side by side keep separate records. Appended a
+line at a time so a power cut costs the last transition rather than the file, and compacted when it
+outgrows the journal. A down and the recovery that closed it are stored as two rows and read as one
+event, because an outage that has not ended yet cannot be stored as a pair.
+
+**An outage still in progress is never discarded.** The journal is a fixed ring like every other
+buffer here, and a 96-minute soak showed why that is not sufficient on its own: one flapping target
+produced 1,900 transitions, swept the ring clean, and took with it the "went down" of a host that
+was *still down*. The log ended up showing nothing but the flapper — having dropped the one outage
+nobody had fixed yet, which is exactly when you would open it. Open outages are now held outside the
+ring, in memory and in the file, until the recovery that closes them arrives. Closed outages still
+age out normally: they are history, and history is what a bounded buffer is allowed to forget.
 
 Kept separate from the events CSV on purpose. That one is written for a person — it rotates, it
 prints `UNREACHABLE` rather than an enum, and its path is configurable so it can live on a share and

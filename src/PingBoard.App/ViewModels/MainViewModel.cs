@@ -380,7 +380,10 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         if (_outages is not null)
         {
             _outages.Append(transition);
-            if (_outages.NeedsCompaction) _outages.Rewrite(Journal.Snapshot());
+            // SnapshotForPersist, not Snapshot: compaction must keep the open outages the ring has
+            // already evicted, or the file loses on disk exactly what the pinned set protects in
+            // memory.
+            if (_outages.NeedsCompaction) _outages.Rewrite(Journal.SnapshotForPersist());
         }
 
         // Queued, not sent, and deliberately from this threadpool thread rather than the

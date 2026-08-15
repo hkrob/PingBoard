@@ -26,10 +26,32 @@ public sealed class TransitionJournal
     /// </summary>
     public const int Capacity = 500;
 
+    /// <summary>
+    /// Cap on pinned open outages. Bounded like everything else here: in practice this holds one
+    /// entry per target that is currently down, which is bounded by the board, but a long-running
+    /// board whose targets are renamed could otherwise accumulate keys that will never be closed.
+    /// </summary>
+    private const int MaxOpen = 256;
+
     private readonly Lock _gate = new();
     private readonly StateTransition[] _items = new StateTransition[Capacity];
     private int _next;
     private int _count;
+
+    /// <summary>
+    /// The transition that opened each outage still in progress, kept outside the ring so that
+    /// eviction cannot take it.
+    /// <para>
+    /// Without this a single noisy target erases everything else. A link flapping twice a minute
+    /// fills five hundred entries in a few hours, and the ring dutifully discards the oldest —
+    /// including the "went down" of a host that is <em>still down</em>. The outage log would then
+    /// show nothing but the flapper, having silently dropped the one outage nobody had fixed yet,
+    /// which is precisely when the log is worth reading. Closed outages still age out normally:
+    /// they are history, and history is what a bounded buffer is allowed to forget.
+    /// </para>
+    /// </summary>
+    private readonly Dictionary<(string Target, TransitionKind Kind), StateTransition> _open =
+        new(new OpenKeyComparer());
 
     public void Add(in StateTransition transition)
     {
@@ -38,29 +60,98 @@ public sealed class TransitionJournal
             _items[_next] = transition;
             _next = (_next + 1) % Capacity;
             if (_count < Capacity) _count++;
+
+            TrackOpenLocked(transition);
         }
+    }
+
+    /// <summary>Maintains the pinned set: a down opens an outage, the matching up closes it.</summary>
+    private void TrackOpenLocked(in StateTransition transition)
+    {
+        // A certificate warning is not an outage and never has a recovery, so pinning one would
+        // pin it forever.
+        if (transition.Kind == TransitionKind.Certificate) return;
+
+        var key = (transition.TargetName, transition.Kind);
+
+        if (transition.Up) { _open.Remove(key); return; }
+
+        _open[key] = transition;
+
+        // Evict the oldest if a pathological config has somehow exceeded the cap.
+        if (_open.Count <= MaxOpen) return;
+
+        var oldest = key;
+        var oldestWhen = DateTimeOffset.MaxValue;
+
+        foreach (var (k, v) in _open)
+            if (v.When < oldestWhen) { oldestWhen = v.When; oldest = k; }
+
+        _open.Remove(oldest);
+    }
+
+    /// <summary>Case-insensitive on the target name, matching every other lookup here.</summary>
+    private sealed class OpenKeyComparer : IEqualityComparer<(string Target, TransitionKind Kind)>
+    {
+        public bool Equals((string Target, TransitionKind Kind) a, (string Target, TransitionKind Kind) b) =>
+            a.Kind == b.Kind && string.Equals(a.Target, b.Target, StringComparison.OrdinalIgnoreCase);
+
+        public int GetHashCode((string Target, TransitionKind Kind) k) =>
+            HashCode.Combine(StringComparer.OrdinalIgnoreCase.GetHashCode(k.Target), k.Kind);
     }
 
     /// <summary>Transitions recorded at or after <paramref name="since"/>, oldest first.</summary>
     public IReadOnlyList<StateTransition> Since(DateTimeOffset since)
     {
-        lock (_gate)
-        {
-            var result = new List<StateTransition>();
-            var start = _count == Capacity ? _next : 0;
-
-            for (var i = 0; i < _count; i++)
-            {
-                ref readonly var item = ref _items[(start + i) % Capacity];
-                if (item.When >= since) result.Add(item);
-            }
-
-            return result;
-        }
+        lock (_gate) return SinceLocked(since);
     }
 
-    /// <summary>Everything retained, oldest first.</summary>
+    private List<StateTransition> SinceLocked(DateTimeOffset since)
+    {
+        var result = new List<StateTransition>();
+        var start = _count == Capacity ? _next : 0;
+
+        for (var i = 0; i < _count; i++)
+        {
+            ref readonly var item = ref _items[(start + i) % Capacity];
+            if (item.When >= since) result.Add(item);
+        }
+
+        return result;
+    }
+
+    /// <summary>Everything retained in the ring, oldest first.</summary>
     public IReadOnlyList<StateTransition> Snapshot() => Since(DateTimeOffset.MinValue);
+
+    /// <summary>
+    /// The ring plus any pinned outage whose opening transition has already been evicted from it,
+    /// oldest first. This is what should be written to disk.
+    /// <para>
+    /// Distinct from <see cref="Snapshot"/> because compaction rewrites the file from this, and
+    /// writing the plain ring would discard on disk exactly the open outages the pinned set exists
+    /// to protect in memory — reintroducing the bug one layer down.
+    /// </para>
+    /// </summary>
+    public IReadOnlyList<StateTransition> SnapshotForPersist()
+    {
+        lock (_gate)
+        {
+            var ring = SinceLocked(DateTimeOffset.MinValue);
+            if (_open.Count == 0) return ring;
+
+            var present = new HashSet<(string, TransitionKind)>(new OpenKeyComparer());
+            foreach (var t in ring)
+                if (!t.Up) present.Add((t.TargetName, t.Kind));
+
+            var merged = new List<StateTransition>(ring);
+
+            foreach (var (key, open) in _open)
+                if (!present.Contains(key)) merged.Add(open);
+
+            merged.Sort(static (a, b) => a.When.CompareTo(b.When));
+            return merged;
+        }
+    }
 
     /// <summary>
     /// Refills the journal from a previous run, discarding whatever it held. Only the newest
@@ -73,6 +164,13 @@ public sealed class TransitionJournal
             Array.Clear(_items);
             _next = 0;
             _count = 0;
+
+            _open.Clear();
+
+            // Every restored transition is replayed through the open-outage tracker, not just the
+            // ones that fit the ring: an outage that was open when the previous run ended must come
+            // back pinned, or it would be dropped on the first eviction after startup.
+            foreach (var t in transitions) TrackOpenLocked(t);
 
             var start = Math.Max(0, transitions.Count - Capacity);
 
@@ -101,7 +199,10 @@ public sealed class TransitionJournal
     public IReadOnlyList<Outage> Outages(DateTimeOffset now)
     {
         var events = Snapshot();
-        var open = new Dictionary<(string, TransitionKind), Outage>();
+
+        // Same comparer as the pinned set, so a target whose name differs only in case cannot be
+        // treated as two hosts by one of them and one by the other.
+        var open = new Dictionary<(string, TransitionKind), Outage>(new OpenKeyComparer());
         var closed = new List<Outage>();
 
         foreach (var e in events)
@@ -137,6 +238,20 @@ public sealed class TransitionJournal
         foreach (var still in open.Values)
             closed.Add(still with { Duration = now - still.Start });
 
+        // Outages whose opening transition has been evicted from the ring, but which are still
+        // running. Without this a host that went down hours ago and has not come back vanishes
+        // from the log entirely as soon as a noisier target fills the buffer.
+        lock (_gate)
+        {
+            foreach (var (key, pinned) in _open)
+            {
+                if (open.ContainsKey((key.Target, key.Kind))) continue;
+
+                closed.Add(new Outage(
+                    pinned.TargetName, pinned.When, null, now - pinned.When, pinned.Status, pinned.Kind));
+            }
+        }
+
         closed.Sort(static (a, b) => b.Start.CompareTo(a.Start));
         return closed;
     }
@@ -148,6 +263,7 @@ public sealed class TransitionJournal
             Array.Clear(_items);
             _next = 0;
             _count = 0;
+            _open.Clear();
         }
     }
 
