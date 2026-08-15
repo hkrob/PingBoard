@@ -1,14 +1,37 @@
 # PingBoard
 
-A always-on ping monitor for Windows 11. Watches a list of hosts, shows what is up and what is
+An always-on ping monitor for Windows 11. Watches a list of hosts, shows what is up and what is
 down, and keeps enough history to tell you *how* something is failing rather than just that it is.
 
-Built on **WinUI 3** (Windows App SDK 2.3.1) and **.NET 10**, deployed unpackaged and
-self-contained — copy the folder and run it, nothing to install.
+ICMP, TCP and HTTP(S) probes. Per-host history and latency graphs, jitter, and rolling 24h/7d/30d
+availability. A traceroute captured automatically at the moment something goes down, so the
+evidence exists before you go looking. Hosts grouped into tabs that can be muted or disabled
+independently, maintenance windows that suppress expected outages, and webhook or email alerts for
+the ones that aren't. Lives in the tray and can start with Windows.
+
+---
+
+## Install
+
+Download the installer from the
+[latest release](https://github.com/hkrob/PingBoard/releases/latest).
+
+It installs per user into `%LocalAppData%\Programs`, so there is no UAC prompt to install or to
+update, and it carries its own runtime — there is no .NET to install first. From then on the app
+checks GitHub for new versions on startup and can update itself in place.
+
+The installer is unsigned, so SmartScreen will warn on first run: *More info* → *Run anyway*. That
+is a property of the certificate, not of the packaging; no installer format avoids it.
+
+Your targets, history and settings live in `%AppData%\PingBoard` and survive updates and
+uninstalls.
 
 ---
 
 ## Build and run
+
+Built on **WinUI 3** (Windows App SDK 2.3.1) and **.NET 10**, deployed unpackaged and
+self-contained.
 
 Requires the .NET 10 SDK (`winget install Microsoft.DotNet.SDK.10`). No Visual Studio needed.
 
@@ -42,12 +65,10 @@ dotnet publish src/PingBoard.App -c Release -r win-x64 -o dist
 "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" installer\PingBoard.iss
 ```
 
-It installs per user into `%LocalAppData%\Programs`, so there is no UAC prompt to install or
-update, and the optional "start when I sign in" checkbox writes the same `HKCU` value the in-app
-toggle does — one setting, not two that can disagree.
-
-The output is unsigned, so SmartScreen will warn until you sign it. That is a property of the
-certificate, not of the packaging: no installer format avoids it.
+The installer's optional "start when I sign in" checkbox writes the same `HKCU` value the in-app
+toggle does — one setting, not two that can disagree. Re-running it over an existing install
+detects the installed version and skips the questions already answered, rather than presenting a
+routine update as a fresh install.
 
 ### The headless engine
 
