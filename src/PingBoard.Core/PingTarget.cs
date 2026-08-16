@@ -385,7 +385,31 @@ public sealed class PingTarget : IDisposable
         int failuresBeforeDown,
         bool raiseTransitions = true,
         DegradeThresholds thresholds = default)
+        => Record(result, failuresBeforeDown, raiseTransitions, thresholds, out _);
+
+    /// <summary>
+    /// As above, but also reports a soft transition that occurred on the same probe.
+    /// </summary>
+    /// <param name="soft">
+    /// The degraded transition raised alongside a real recovery, or null.
+    /// <para>
+    /// One probe can genuinely be two pieces of news: a host that comes back from an outage and is
+    /// slow the moment it returns has both recovered and become degraded. There is one return
+    /// value and the hard transition has to win it, so this used to be dropped on the floor — the
+    /// log then said the host simply came back, and because the latch had already been set it
+    /// would never mention the degradation at all. An overnight soak made that visible: three
+    /// outages on a permanently degraded host produced exactly one degraded event between them.
+    /// </para>
+    /// </param>
+    public StateTransition? Record(
+        in ProbeResult result,
+        int failuresBeforeDown,
+        bool raiseTransitions,
+        DegradeThresholds thresholds,
+        out StateTransition? soft)
     {
+        soft = null;
+
         lock (_gate)
         {
             Availability.Record(result.Status, result.When);
@@ -407,17 +431,20 @@ public sealed class PingTarget : IDisposable
 
                 // Assessed before the recovery return, so a host that comes back slow reads amber
                 // from that first reply rather than green until the probe after it.
-                var soft = EvaluateDegradedLocked(result, thresholds, raiseTransitions);
+                var degraded = EvaluateDegradedLocked(result, thresholds, raiseTransitions);
 
-                if (!wasDown || !raiseTransitions) { _downSinceTick = null; return soft; }
+                if (!wasDown || !raiseTransitions) { _downSinceTick = null; return degraded; }
 
                 var downFor = _downSinceTick is { } since
                     ? TimeSpan.FromMilliseconds(result.TickMs - since)
                     : TimeSpan.Zero;
                 _downSinceTick = null;
 
-                // The hard transition wins when a probe produces both. "It came back" is the
-                // headline; "and it is slow" is on the board and in the log either way.
+                // The hard transition wins the return value — "it came back" is the headline — but
+                // the degraded one is handed back rather than dropped, so the log records both
+                // things that actually happened.
+                soft = degraded;
+
                 return new StateTransition(
                     Config.Name, Up: true, result.When, downFor, result.Status, failuresBeforeDown);
             }

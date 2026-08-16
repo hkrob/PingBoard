@@ -385,19 +385,25 @@ public sealed class ProbeScheduler : IAsyncDisposable
         var transition = target.Record(
             result,
             target.FailuresBeforeDownFrom(settings),
-            raiseTransitions: !quiet,
-            thresholds: target.ThresholdsFrom(settings));
+            !quiet,
+            target.ThresholdsFrom(settings),
+            out var soft);
 
-        if (transition is not { } t) return;
+        if (transition is { } t)
+        {
+            Transition?.Invoke(t);
 
-        Transition?.Invoke(t);
+            // Real outages only, and down only. A recovery would trace a path that is working
+            // again, and a target that merely became slow is still answering — tracing it would
+            // add ICMP to a link already showing strain, to describe a route that is by definition
+            // still carrying traffic.
+            if (!t.Up && t.Kind == TransitionKind.Hard && settings.TraceOnFailure)
+                _ = TraceFailureAsync(target, settings);
+        }
 
-        // Real outages only, and down only. A recovery would trace a path that is working again,
-        // and a target that merely became slow is still answering — tracing it would add ICMP to a
-        // link already showing strain, to describe a route that is by definition still carrying
-        // traffic.
-        if (!t.Up && t.Kind == TransitionKind.Hard && settings.TraceOnFailure)
-            _ = TraceFailureAsync(target, settings);
+        // Raised second, after the recovery it accompanied, so the two read in the order they
+        // happened: the host came back, and it came back slow.
+        if (soft is { } s) Transition?.Invoke(s);
     }
 
     /// <summary>

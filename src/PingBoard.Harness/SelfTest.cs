@@ -1588,8 +1588,10 @@ internal static class SelfTest
 
         // A hard outage must take precedence and reset the soft latch.
         using var falls = new PingTarget(new TargetConfig { Name = "falls", Address = "10.0.0.4" }, settings);
+        // Enough samples that this run can be judged at all — the restored-history gate wants a
+        // full window before it will decide anything, and ten leaves it silent.
         var fallTick = 0L;
-        for (var i = 0; i < 10; i++)
+        for (var i = 0; i < 25; i++)
             falls.Record(ProbeResult.Ok(5000, System.Net.IPAddress.Loopback, fallTick += 1000, now),
                          3, thresholds: thresholds);
 
@@ -1603,6 +1605,44 @@ internal static class SelfTest
 
         Check("degraded: a real outage still fires as a hard transition",
             down is { Up: false, Kind: TransitionKind.Hard });
+
+        // Recovering into a degraded state is two pieces of news on one probe, and an overnight
+        // soak showed the second was being thrown away: three outages on a permanently degraded
+        // host produced one degraded event between them, because the hard transition won the
+        // single return value and the latch was left set behind it.
+        var recovery = falls.Record(
+            ProbeResult.Ok(5000, System.Net.IPAddress.Loopback, fallTick += 1000, now),
+            3, true, thresholds, out var alsoDegraded);
+
+        Check("degraded: recovery is still the headline",
+            recovery is { Up: true, Kind: TransitionKind.Hard });
+        Check("degraded: and the degradation it recovered into is reported too",
+            alsoDegraded is { Up: false, Kind: TransitionKind.Degraded });
+        Check("degraded: the board shows the degraded state, not plain OK",
+            falls.Snapshot().Status == TargetStatus.Degraded);
+
+        // An ordinary degraded entry, with no outage attached, must still arrive as the primary
+        // rather than being duplicated into both slots.
+        using var plain = new PingTarget(
+            new TargetConfig { Name = "plain", Address = "10.0.0.6" }, settings);
+
+        StateTransition? plainSoft = null;
+        StateTransition? plainPrimary = null;
+        var plainTick = 0L;
+
+        for (var i = 0; i < 25; i++)
+        {
+            var t = plain.Record(
+                ProbeResult.Ok(5000, System.Net.IPAddress.Loopback, plainTick += 1000, now),
+                3, true, thresholds, out var s);
+
+            if (t is not null) plainPrimary = t;
+            if (s is not null) plainSoft = s;
+        }
+
+        Check("degraded: a plain degraded entry is the primary transition",
+            plainPrimary is { Kind: TransitionKind.Degraded });
+        Check("degraded: and is not also reported as a secondary", plainSoft is null);
 
         // Restored history must not be judged. A board restarted after a week would otherwise
         // decide a target is degraded on the strength of how it behaved last Tuesday, and alert
