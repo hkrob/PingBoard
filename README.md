@@ -9,6 +9,20 @@ evidence exists before you go looking. Hosts grouped into tabs that can be muted
 independently, maintenance windows that suppress expected outages, and webhook or email alerts for
 the ones that aren't. Lives in the tray and can start with Windows.
 
+![The board](docs/screenshots/board-dark.png)
+
+A live board: healthy hosts, one target past its latency threshold, one that is not answering, and
+certificate expiry for the HTTPS targets. Every figure is real — this is eight public hosts probed
+for a few minutes, not a mock-up.
+
+Expanding a row opens its latency graph, and the failure trace if there is one:
+
+![The latency graph](docs/screenshots/board-detail.png)
+
+There is also a terminal theme, for those who want one:
+
+![The Matrix theme](docs/screenshots/board-matrix.png)
+
 ---
 
 ## Install

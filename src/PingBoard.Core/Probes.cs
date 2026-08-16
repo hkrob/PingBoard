@@ -198,16 +198,48 @@ public sealed class HttpProbe(bool useTls) : IProbe
     /// open a fresh TCP connection — and a fresh TLS handshake — on every single request, which
     /// would measure our own setup cost rather than the server's response time.
     /// </summary>
-    private static readonly HttpClient Client = new(new SocketsHttpHandler
+    private static readonly HttpClient Client = CreateClient();
+
+    /// <summary>
+    /// Identifies itself, which is both good manners for something that will hit a third-party
+    /// server every few seconds for months and a correctness fix.
+    /// <para>
+    /// A request with no <c>User-Agent</c> is rejected outright by a number of large sites —
+    /// Wikipedia answers 403 — so probing one showed a permanently red row for a service that was
+    /// working perfectly. That is the worst kind of monitoring failure: not a missed outage but a
+    /// manufactured one, which teaches the user to disbelieve the board.
+    /// </para>
+    /// </summary>
+    private static HttpClient CreateClient()
     {
-        AllowAutoRedirect = false,
-        PooledConnectionLifetime = TimeSpan.FromMinutes(2),
-    })
+        var client = new HttpClient(new SocketsHttpHandler
+        {
+            AllowAutoRedirect = false,
+            PooledConnectionLifetime = TimeSpan.FromMinutes(2),
+        })
+        {
+            // Per-request cancellation supplies the real timeout; this only stops a stuck request
+            // living forever if that is ever missed.
+            Timeout = Timeout.InfiniteTimeSpan,
+        };
+
+        client.DefaultRequestHeaders.UserAgent.ParseAdd(UserAgent);
+        return client;
+    }
+
+    /// <summary>
+    /// The product, its version, and where to complain — the three things an operator wants when
+    /// an unfamiliar agent turns up in their access log.
+    /// </summary>
+    internal static string UserAgent
     {
-        // Per-request cancellation supplies the real timeout; this only stops a stuck request
-        // living forever if that is ever missed.
-        Timeout = Timeout.InfiniteTimeSpan,
-    };
+        get
+        {
+            var version = System.Reflection.Assembly.GetEntryAssembly()?.GetName().Version;
+            var number = version is null ? "1" : $"{version.Major}.{version.Minor}.{version.Build}";
+            return $"PingBoard/{number} (+https://github.com/hkrob/PingBoard)";
+        }
+    }
 
     private readonly bool _useTls = useTls;
 

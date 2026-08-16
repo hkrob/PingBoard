@@ -1411,6 +1411,10 @@ internal static class SelfTest
             return;
         }
 
+        // Whatever the last request identified itself as, so the probe's manners can be asserted
+        // rather than assumed.
+        string? seenAgent = null;
+
         // Answers by path: /ok -> 200, /boom -> 500, /moved -> 302.
         _ = Task.Run(async () =>
         {
@@ -1419,6 +1423,7 @@ internal static class SelfTest
                 try
                 {
                     var context = await listener.GetContextAsync().ConfigureAwait(false);
+                    seenAgent = context.Request.UserAgent;
                     context.Response.StatusCode = context.Request.Url?.AbsolutePath switch
                     {
                         "/boom" => 500,
@@ -1470,6 +1475,16 @@ internal static class SelfTest
 
         Check("http: a closed port is not reported as an HTTP error",
             refused.Status is TargetStatus.Refused or TargetStatus.Unreachable or TargetStatus.Timeout);
+
+        // The probe must identify itself. Sending no User-Agent is not merely impolite for
+        // something that will hit a third-party server every few seconds for months — several
+        // large sites answer 403, so the board manufactures an outage for a service that is
+        // working. Wikipedia did exactly that, which is how this was found.
+        Check("http: the probe sends a User-Agent", !string.IsNullOrWhiteSpace(seenAgent));
+        Check("http: it names the product and where to complain",
+            seenAgent is not null
+            && seenAgent.StartsWith("PingBoard/", StringComparison.Ordinal)
+            && seenAgent.Contains("github.com/hkrob/PingBoard", StringComparison.Ordinal));
 
         listener.Stop();
         probe.Dispose();
