@@ -190,6 +190,13 @@ Muting a tab suppresses webhook and email too, unlike the global mute button whi
 desktop-only. Muting a tab is a statement about those hosts; muting the app is a statement about
 this machine, and something meant to reach you elsewhere should survive the latter.
 
+The same right-click menu can **rename** or **delete** a tab. Renaming repoints every member target
+and renames the section in place, keeping its position in the strip. Deleting moves its targets to
+`General` rather than taking them with it — a tab is a grouping, and losing the grouping must never
+be a surprise way to stop monitoring something. `General` itself refuses both: it is where an
+ungrouped target lands by definition, so renaming or deleting it would not make it go away, only
+leave an empty one to reappear the next time something needs the default.
+
 Counters *and probe history* live in a sidecar (`board.state.ini`), so the file you edit stays free
 of churning numbers. Deleting the sidecar resets all statistics; there is a menu item for the same
 thing.
