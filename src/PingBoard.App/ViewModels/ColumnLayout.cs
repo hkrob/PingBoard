@@ -49,6 +49,7 @@ public sealed class ColumnLayout : INotifyPropertyChanged
         [nameof(CertDays)] = 76,
         [nameof(SiteName)] = 100,
         [nameof(SiteAbbreviation)] = 64,
+        [nameof(Tags)] = 140,
     };
 
     /// <summary>
@@ -66,7 +67,7 @@ public sealed class ColumnLayout : INotifyPropertyChanged
     [
         nameof(AvgMinMax), nameof(Fails), nameof(Uptime), nameof(Probe),
         nameof(Avail7d), nameof(Avail30d), nameof(CertExpiring), nameof(CertDays),
-        nameof(SiteName), nameof(SiteAbbreviation),
+        nameof(SiteName), nameof(SiteAbbreviation), nameof(Tags),
     ];
 
     /// <summary>
@@ -108,6 +109,7 @@ public sealed class ColumnLayout : INotifyPropertyChanged
     public GridLength CertDays => Width(nameof(CertDays));
     public GridLength SiteName => Width(nameof(SiteName));
     public GridLength SiteAbbreviation => Width(nameof(SiteAbbreviation));
+    public GridLength Tags => Width(nameof(Tags));
 
     private GridLength Width([CallerMemberName] string id = "")
     {
@@ -218,6 +220,7 @@ public sealed class ColumnLayout : INotifyPropertyChanged
     public GridLength Pos19 => WidthAt(19);
     public GridLength Pos20 => WidthAt(20);
     public GridLength Pos21 => WidthAt(21);
+    public GridLength Pos22 => WidthAt(22);
 
     // Where each column currently sits.
     public int IdxStatus => IndexOf(nameof(Status));
@@ -242,6 +245,7 @@ public sealed class ColumnLayout : INotifyPropertyChanged
     public int IdxCertDays => IndexOf(nameof(CertDays));
     public int IdxSiteName => IndexOf(nameof(SiteName));
     public int IdxSiteAbbreviation => IndexOf(nameof(SiteAbbreviation));
+    public int IdxTags => IndexOf(nameof(Tags));
 
     // ------------------------------------------------------------------ auto-fit
     //
@@ -383,6 +387,7 @@ public sealed class ColumnLayout : INotifyPropertyChanged
     public Visibility CertDaysVis => Vis(nameof(CertDays));
     public Visibility SiteNameVis => Vis(nameof(SiteName));
     public Visibility SiteAbbreviationVis => Vis(nameof(SiteAbbreviation));
+    public Visibility TagsVis => Vis(nameof(Tags));
 
     private Visibility Vis(string id) =>
         _hidden.Contains(id) ? Visibility.Collapsed : Visibility.Visible;
@@ -473,6 +478,7 @@ public sealed class ColumnLayout : INotifyPropertyChanged
         nameof(CertDays) => "Cert days",
         nameof(SiteName) => "Site",
         nameof(SiteAbbreviation) => "Site Abbr",
+        nameof(Tags) => "Tags",
         _ => id,
     };
 

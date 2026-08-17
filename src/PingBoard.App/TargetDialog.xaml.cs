@@ -46,6 +46,8 @@ public sealed partial class TargetDialog : ContentDialog
                 .FirstOrDefault(s => string.Equals(s.Name, config.Site, StringComparison.OrdinalIgnoreCase))
                 ?.Abbreviation ?? "";
 
+            TagsBox.Text = string.Join(", ", config.Tags);
+
             SetOptional(IntervalBox, config.IntervalMs);
             SetOptional(TimeoutBox, config.TimeoutMs);
             SetOptional(PayloadBox, config.PayloadBytes);
@@ -246,6 +248,7 @@ public sealed partial class TargetDialog : ContentDialog
             Enabled = EnabledSwitch.IsOn,
             Tab = TabConfig.Normalise(TabBox.Text),
             Site = site,
+            Tags = ConfigStore.ParseTags(TagsBox.Text),
             Maintenance = maintenance,
             Path = isHttp ? path : "/",
             ExpectStatus = isHttp ? ReadOptional(ExpectStatusBox) : null,

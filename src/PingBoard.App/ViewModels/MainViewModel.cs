@@ -117,6 +117,17 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         if (!string.Equals(TabConfig.Normalise(row.Target.Config.Tab), _selectedTab, StringComparison.OrdinalIgnoreCase))
             return false;
 
+        var tabConfig = _tabs.Find(t => string.Equals(t.Name, _selectedTab, StringComparison.OrdinalIgnoreCase));
+        if (tabConfig is { SelectedTags.Count: > 0 })
+        {
+            var tags = row.Target.Config.Tags;
+            var matches = false;
+            foreach (var tag in tabConfig.SelectedTags)
+                if (tags.Contains(tag, StringComparer.OrdinalIgnoreCase)) { matches = true; break; }
+
+            if (!matches) return false;
+        }
+
         if (FilterText is { Length: > 0 } text)
         {
             var hit = row.Name.Contains(text, StringComparison.OrdinalIgnoreCase)
@@ -464,7 +475,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
         Tabs.Clear();
         foreach (var tab in _tabs)
-            Tabs.Add(new TabItem(tab.Name) { IsEnabled = tab.Enabled, IsMuted = tab.Muted });
+            Tabs.Add(new TabItem(tab.Name) { IsEnabled = tab.Enabled, IsMuted = tab.Muted, HasTagFilter = tab.SelectedTags.Count > 0 });
 
         if (!_tabs.Any(t => string.Equals(t.Name, _selectedTab, StringComparison.OrdinalIgnoreCase)))
             _selectedTab = _tabs[0].Name;
@@ -585,6 +596,47 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
         ApplyTabStateToTargets();
         SaveConfig();
+    }
+
+    /// <summary>The tags currently narrowing a tab, for the filter picker to pre-check.</summary>
+    public IReadOnlyList<string> GetTabTags(TabItem tab) =>
+        _tabs.Find(t => string.Equals(t.Name, tab.Name, StringComparison.OrdinalIgnoreCase))?.SelectedTags ?? [];
+
+    /// <summary>
+    /// Narrows a tab to targets carrying at least one of <paramref name="tags"/>, on top of its
+    /// normal membership, and persists the choice. An empty list clears the filter.
+    /// </summary>
+    public void SetTabTags(TabItem tab, IReadOnlyList<string> tags)
+    {
+        var config = _tabs.Find(t => string.Equals(t.Name, tab.Name, StringComparison.OrdinalIgnoreCase));
+        if (config is not null) config.SelectedTags = [.. tags];
+
+        tab.HasTagFilter = tags.Count > 0;
+
+        RebuildVisibleRows();
+        SaveConfig();
+    }
+
+    /// <summary>
+    /// Every tag currently in use across all targets, for the tag-filter picker — deduplicated
+    /// case-insensitively but keeping the first spelling seen, same as <c>ConfigStore.ParseTags</c>,
+    /// then sorted for a stable, scannable list.
+    /// </summary>
+    public IReadOnlyList<string> AllKnownTags
+    {
+        get
+        {
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var result = new List<string>();
+
+            foreach (var row in Rows)
+                foreach (var tag in row.Target.Config.Tags)
+                    if (seen.Add(tag))
+                        result.Add(tag);
+
+            result.Sort(StringComparer.OrdinalIgnoreCase);
+            return result;
+        }
     }
 
     /// <summary>

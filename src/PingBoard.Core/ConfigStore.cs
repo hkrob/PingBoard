@@ -121,6 +121,7 @@ public static class ConfigStore
                 Enabled = section.GetBool(nameof(TabConfig.Enabled), true),
                 Muted = section.GetBool(nameof(TabConfig.Muted), false),
                 Order = section.GetInt(nameof(TabConfig.Order), order++),
+                SelectedTags = ParseTags(section.GetString(nameof(TabConfig.SelectedTags), "")),
             });
         }
 
@@ -184,6 +185,7 @@ public static class ConfigStore
                 Enabled = section.GetBool(nameof(TargetConfig.Enabled), true),
                 Tab = section.GetString(nameof(TargetConfig.Tab), "").Trim(),
                 Site = section.GetString(nameof(TargetConfig.Site), "").Trim(),
+                Tags = ParseTags(section.GetString(nameof(TargetConfig.Tags), "")),
 
                 // Every override is clamped to the same range Settings.Validate applies globally.
                 // An override that skipped validation would be the one value in the file that
@@ -268,6 +270,11 @@ public static class ConfigStore
             section.Set(nameof(TabConfig.Enabled), tab.Enabled);
             section.Set(nameof(TabConfig.Muted), tab.Muted);
             section.Set(nameof(TabConfig.Order), order++);
+
+            // Optional, unlike the three above: no filter is every tab's starting state, and a
+            // board that never uses tag filters should never gain an empty Tags= line on every tab.
+            if (tab.SelectedTags.Count > 0)
+                section.Set(nameof(TabConfig.SelectedTags), FormatTags(tab.SelectedTags));
         }
     }
 
@@ -309,6 +316,31 @@ public static class ConfigStore
 
     private static double? ClampOrNull(double? value, double min, double max) =>
         value is { } v ? Math.Clamp(v, min, max) : null;
+
+    /// <summary>
+    /// Splits a comma-separated <c>Tags=</c> value, used identically for a target's own tags and a
+    /// tab's selected-tags filter. Trimmed, empty entries dropped, and de-duplicated
+    /// case-insensitively but keeping the first spelling seen — a hand-edited file with
+    /// "Critical,critical" should not silently double-count in whatever reads the list back.
+    /// <para>
+    /// Public rather than private: the target-editing dialog in the App project parses the same
+    /// comma-separated shape from its Tags text box and would otherwise have to duplicate this
+    /// exact dedupe rule to stay consistent with what gets persisted.
+    /// </para>
+    /// </summary>
+    public static List<string> ParseTags(string csv)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var result = new List<string>();
+
+        foreach (var raw in csv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            if (seen.Add(raw))
+                result.Add(raw);
+
+        return result;
+    }
+
+    public static string FormatTags(IEnumerable<string> tags) => string.Join(',', tags);
 
     /// <summary>
     /// Writes the <c>[Alerts]</c> section, or copies the existing one across verbatim when the
@@ -432,6 +464,7 @@ public static class ConfigStore
             // round-trips byte for byte.
             if (t.Tab is { Length: > 0 }) section.Set(nameof(TargetConfig.Tab), t.Tab);
             if (t.Site is { Length: > 0 }) section.Set(nameof(TargetConfig.Site), t.Site);
+            if (t.Tags.Count > 0) section.Set(nameof(TargetConfig.Tags), FormatTags(t.Tags));
             if (t.Maintenance is { Length: > 0 }) section.Set(nameof(TargetConfig.Maintenance), t.Maintenance);
 
             section.SetOptional(nameof(TargetConfig.IntervalMs), t.IntervalMs);

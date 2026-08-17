@@ -46,6 +46,7 @@ internal static class SelfTest
             TraceRouteFindsThePath();
             TabsGroupWithoutGating(scratch);
             SitesAreIndependentOfTabs(scratch);
+            TagsNarrowTabMembership(scratch);
             UpdateVersionComparison();
             HttpProbeJudgesTheStatusCode();
             RecentStatsWindow();
@@ -1401,6 +1402,63 @@ internal static class SelfTest
             !legacyText.Contains("Site=", StringComparison.OrdinalIgnoreCase));
         Check("sites: a site-free config gains no [Site:] section",
             !legacyText.Contains("[Site:", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static void TagsNarrowTabMembership(string dir)
+    {
+        var path = Path.Combine(dir, "tags.ini");
+
+        var targets = new List<TargetConfig>
+        {
+            new() { Name = "gw", Address = "10.1.10.1", Tab = "LAN", Tags = ["critical", "dns"] },
+            new() { Name = "printer", Address = "10.1.10.5", Tab = "LAN", Tags = ["Critical"] },   // dupe, different case
+            new() { Name = "wan", Address = "1.1.1.1", Tab = "WAN", Tags = ["critical"] },
+            new() { Name = "stray", Address = "8.8.8.8", Tab = "LAN" },                            // no tags at all
+        };
+
+        var tabs = new List<TabConfig>
+        {
+            new() { Name = "LAN", Order = 0, SelectedTags = ["critical"] },
+            new() { Name = "WAN", Order = 1 },   // no filter
+        };
+
+        ConfigStore.Save(path, new Settings(), targets, null, tabs);
+        var loaded = ConfigStore.Load(path);
+
+        Check("tags: a target's tags round-trip",
+            loaded.Targets.First(t => t.Name == "gw").Tags.SequenceEqual(["critical", "dns"]));
+        Check("tags: a tag-free target has an empty list, not null",
+            loaded.Targets.First(t => t.Name == "stray").Tags.Count == 0);
+        Check("tags: a tab's selected-tags filter round-trips",
+            loaded.Tabs.First(t => t.Name == "LAN").SelectedTags.SequenceEqual(["critical"]));
+        Check("tags: a tab with no filter round-trips empty",
+            loaded.Tabs.First(t => t.Name == "WAN").SelectedTags.Count == 0);
+
+        // Independence from Tab and Site, same shape as the sites test: a tag says nothing about
+        // which tab a target sits in, and a tab's filter narrows its own members rather than
+        // reaching across tabs.
+        Check("tags: same tag, different tabs — both preserved",
+            loaded.Targets.First(t => t.Name == "gw").Tab == "LAN"
+            && loaded.Targets.First(t => t.Name == "wan").Tab == "WAN");
+
+        // Autosave paths pass no tabs; they must not delete a tab's tag filter.
+        ConfigStore.Save(path, new Settings(), targets);
+        Check("tags: an autosave without tabs preserves a tab's tag filter",
+            ConfigStore.Load(path).Tabs.First(t => t.Name == "LAN").SelectedTags.SequenceEqual(["critical"]));
+
+        // A board that never used tags must round-trip without gaining a Tags key anywhere.
+        var legacy = Path.Combine(dir, "legacy-tags.ini");
+        ConfigStore.Save(legacy, new Settings(),
+            [new TargetConfig { Name = "old", Address = "1.2.3.4" }], null,
+            [new TabConfig { Name = "Solo", Order = 0 }]);
+        var legacyText = File.ReadAllText(legacy);
+        Check("tags: a tag-free config gains no Tags key",
+            !legacyText.Contains("Tags=", StringComparison.OrdinalIgnoreCase));
+
+        // A hand-edited "Critical,critical" must not silently double-count in whatever reads the
+        // list back — ParseTags dedupes case-insensitively, keeping the first spelling.
+        Check("tags: ParseTags dedupes case-insensitively, keeping the first spelling",
+            ConfigStore.ParseTags(" Critical, critical ,dns,DNS ").SequenceEqual(["Critical", "dns"]));
     }
 
     private static void TabsGroupWithoutGating(string dir)

@@ -54,6 +54,14 @@
                                        FontSize="{x:Bind vm:ColumnLayout.Instance.ChevronFontSize, Mode=OneWay}"
                                        VerticalAlignment="Center"
                                        Visibility="{x:Bind MutedMarkVisibility, Mode=OneWay}" />
+                            <!-- A filter narrowing what this tab shows is easy to forget about once
+                                 set, so like the mute bell it stays visible rather than living only
+                                 in a tooltip. -->
+                            <TextBlock Text="&#xE71C;"
+                                       FontFamily="Segoe Fluent Icons"
+                                       FontSize="{x:Bind vm:ColumnLayout.Instance.ChevronFontSize, Mode=OneWay}"
+                                       VerticalAlignment="Center"
+                                       Visibility="{x:Bind TagFilterMarkVisibility, Mode=OneWay}" />
                             <TextBlock Text="{x:Bind Label, Mode=OneWay}"
                                        FontSize="12"
                                        Opacity="{x:Bind SelectionOpacity, Mode=OneWay}" />
@@ -65,6 +73,8 @@
                                 <MenuFlyoutSeparator />
                                 <MenuFlyoutItem Text="Enable this tab" Click="OnEnableTab" />
                                 <MenuFlyoutItem Text="Disable this tab (stops probing)" Click="OnDisableTab" />
+                                <MenuFlyoutSeparator />
+                                <MenuFlyoutItem Text="Filter by tags…" Click="OnFilterTabByTags" />
                                 <MenuFlyoutSeparator />
                                 <!-- Both offered even on the General tab, which refuses both with an
                                      explanation on click — simpler and more honest than hiding the
@@ -281,6 +291,7 @@
                     <ColumnDefinition Width="{x:Bind vm:ColumnLayout.Instance.Pos19, Mode=OneWay}" />
                     <ColumnDefinition Width="{x:Bind vm:ColumnLayout.Instance.Pos20, Mode=OneWay}" />
                     <ColumnDefinition Width="{x:Bind vm:ColumnLayout.Instance.Pos21, Mode=OneWay}" />
+                    <ColumnDefinition Width="{x:Bind vm:ColumnLayout.Instance.Pos22, Mode=OneWay}" />
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
 
@@ -310,6 +321,7 @@
                 <TextBlock Grid.Column="{x:Bind vm:ColumnLayout.Instance.IdxCertDays, Mode=OneWay}"                      Tag="Cert days"       Text="Cert days"       Style="{StaticResource HeaderTextStyle}"                           Visibility="{x:Bind vm:ColumnLayout.Instance.CertDaysVis, Mode=OneWay}"   HorizontalAlignment="Right" Margin="0,0,10,0" />
                 <TextBlock Grid.Column="{x:Bind vm:ColumnLayout.Instance.IdxSiteName, Mode=OneWay}"                       Tag="Site"            Text="Site"            Style="{StaticResource HeaderTextStyle}"                           Visibility="{x:Bind vm:ColumnLayout.Instance.SiteNameVis, Mode=OneWay}" />
                 <TextBlock Grid.Column="{x:Bind vm:ColumnLayout.Instance.IdxSiteAbbreviation, Mode=OneWay}"               Tag="Site Abbr"       Text="Site Abbr"       Style="{StaticResource HeaderTextStyle}"                           Visibility="{x:Bind vm:ColumnLayout.Instance.SiteAbbreviationVis, Mode=OneWay}" />
+                <TextBlock Grid.Column="{x:Bind vm:ColumnLayout.Instance.IdxTags, Mode=OneWay}"                            Tag="Tags"            Text="Tags"            Style="{StaticResource HeaderTextStyle}"                           Visibility="{x:Bind vm:ColumnLayout.Instance.TagsVis, Mode=OneWay}" />
             </Grid>
         </Border>
 
@@ -373,6 +385,7 @@
                             <ColumnDefinition Width="{x:Bind vm:ColumnLayout.Instance.Pos19, Mode=OneWay}" />
                             <ColumnDefinition Width="{x:Bind vm:ColumnLayout.Instance.Pos20, Mode=OneWay}" />
                             <ColumnDefinition Width="{x:Bind vm:ColumnLayout.Instance.Pos21, Mode=OneWay}" />
+                            <ColumnDefinition Width="{x:Bind vm:ColumnLayout.Instance.Pos22, Mode=OneWay}" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
 
@@ -432,6 +445,7 @@
                         <TextBlock Grid.Column="{x:Bind vm:ColumnLayout.Instance.IdxCertDays, Mode=OneWay}" Text="{x:Bind CertDays, Mode=OneWay}"     Style="{StaticResource NumericCellStyle}" FontSize="{x:Bind vm:ColumnLayout.Instance.CellFontSize, Mode=OneWay}" Visibility="{x:Bind vm:ColumnLayout.Instance.CertDaysVis, Mode=OneWay}"   Margin="0,0,10,0" Opacity="0.85" />
                         <TextBlock Grid.Column="{x:Bind vm:ColumnLayout.Instance.IdxSiteName, Mode=OneWay}" Text="{x:Bind SiteName, Mode=OneWay}"     Style="{StaticResource CellTextStyle}" FontSize="{x:Bind vm:ColumnLayout.Instance.CellFontSize, Mode=OneWay}" Visibility="{x:Bind vm:ColumnLayout.Instance.SiteNameVis, Mode=OneWay}" Opacity="0.85" />
                         <TextBlock Grid.Column="{x:Bind vm:ColumnLayout.Instance.IdxSiteAbbreviation, Mode=OneWay}" Text="{x:Bind SiteAbbreviation, Mode=OneWay}" Style="{StaticResource CellTextStyle}" FontSize="{x:Bind vm:ColumnLayout.Instance.CellFontSize, Mode=OneWay}" Visibility="{x:Bind vm:ColumnLayout.Instance.SiteAbbreviationVis, Mode=OneWay}" Opacity="0.85" />
+                        <TextBlock Grid.Column="{x:Bind vm:ColumnLayout.Instance.IdxTags, Mode=OneWay}" Text="{x:Bind Tags, Mode=OneWay}" Style="{StaticResource CellTextStyle}" FontSize="{x:Bind vm:ColumnLayout.Instance.CellFontSize, Mode=OneWay}" Visibility="{x:Bind vm:ColumnLayout.Instance.TagsVis, Mode=OneWay}" Opacity="0.85" />
                     </Grid>
 
                     <!-- Detail panel, nested under the host it belongs to: the latency graph, and

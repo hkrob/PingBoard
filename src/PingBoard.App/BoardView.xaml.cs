@@ -470,6 +470,16 @@ public sealed partial class BoardView : UserControl
         catch (Exception ex) { CrashLog.Write(ex); }
     }
 
+    private async void OnFilterTabByTags(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            if (sender is FrameworkElement { DataContext: TabItem tab })
+                await TagFilterDialog.ShowAsync(XamlRoot, Vm, tab);
+        }
+        catch (Exception ex) { CrashLog.Write(ex); }
+    }
+
     private async void OnDeleteTab(object sender, RoutedEventArgs e)
     {
         try

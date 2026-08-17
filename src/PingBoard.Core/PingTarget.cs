@@ -29,6 +29,14 @@ public sealed class TargetConfig
     /// </summary>
     public string Site { get; set; } = "";
 
+    /// <summary>
+    /// Free-form labels, any number of them — unlike <see cref="Tab"/> and <see cref="Site"/>,
+    /// which are each exactly one value per target by construction. A tab can filter itself down to
+    /// targets carrying a given tag (<see cref="TabConfig.SelectedTags"/>); nothing else reads this
+    /// list, so a tag with no tab watching for it costs nothing and needs no cleanup.
+    /// </summary>
+    public List<string> Tags { get; set; } = [];
+
     /// <summary>Request path for HTTP probes. Ignored by ICMP and TCP.</summary>
     public string Path { get; set; } = "/";
 

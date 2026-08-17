@@ -83,6 +83,9 @@ public sealed partial class TargetRow : ObservableObject
     /// </summary>
     [ObservableProperty] public partial string SiteAbbreviation { get; private set; } = "—";
 
+    /// <summary>Every tag on this target, comma-joined for display — "—" when it has none.</summary>
+    [ObservableProperty] public partial string Tags { get; private set; } = "—";
+
     [ObservableProperty] public partial string ThemeKey { get; private set; } = "StatusIdleBrush";
 
     /// <summary>
@@ -259,6 +262,8 @@ public sealed partial class TargetRow : ObservableObject
             SiteName = "—";
             SiteAbbreviation = "—";
         }
+
+        Tags = Target.Config.Tags.Count > 0 ? string.Join(", ", Target.Config.Tags) : "—";
 
         StatusLabel = s.Status.Label();
         StatusGlyph = s.Status.Glyph();

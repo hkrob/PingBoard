@@ -125,6 +125,7 @@ public sealed class ColumnFitter
         "CertDays" => row.CertDays,
         "SiteName" => row.SiteName,
         "SiteAbbreviation" => row.SiteAbbreviation,
+        "Tags" => row.Tags,
         _ => "",
     };
 }

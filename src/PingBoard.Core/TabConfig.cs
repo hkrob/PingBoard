@@ -49,6 +49,19 @@ public sealed class TabConfig
     /// </summary>
     public bool Muted { get; set; }
 
+    /// <summary>
+    /// Narrows this tab to targets carrying at least one of these tags, on top of its normal
+    /// membership rather than instead of it — a target still belongs to exactly one tab
+    /// (<see cref="TargetConfig.Tab"/>); this only decides which of that tab's own members are
+    /// currently shown. Empty means no filter, which is every board's starting state and stays
+    /// that way until a tab's filter is actually set.
+    /// <para>
+    /// Assign a whole new list rather than mutating this one in place — <see cref="Clone"/> is a
+    /// shallow copy, so a clone's list is still the same object as the original's until replaced.
+    /// </para>
+    /// </summary>
+    public List<string> SelectedTags { get; set; } = [];
+
     public TabConfig Clone() => (TabConfig)MemberwiseClone();
 
     /// <summary>Normalises a tab name, mapping blank onto the default group.</summary>
