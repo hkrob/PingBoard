@@ -197,7 +197,17 @@ public sealed partial class TargetRow : ObservableObject
     /// is a setting the user can change while the board is running and a copy held here would go
     /// stale the moment they did.
     /// </param>
-    public void Refresh(int certWarnDays = 14)
+    /// <param name="timeoutMs">
+    /// This target's effective probe timeout — the per-target override if it has one, else the
+    /// global default. Same reasoning as <paramref name="certWarnDays"/>: read fresh every refresh
+    /// rather than cached, since either setting can change under a running board.
+    /// <para>
+    /// The default here is only ever seen for the one <c>Refresh()</c> call the constructor makes
+    /// before the row has been told anything real — <see cref="MainViewModel.RefreshRows"/> passes
+    /// the actual value within the next tick, so a row is never left showing a stale placeholder.
+    /// </para>
+    /// </param>
+    public void Refresh(int certWarnDays = 14, int timeoutMs = 2000)
     {
         var s = Target.Snapshot();
         Snapshot = s;
@@ -270,13 +280,13 @@ public sealed partial class TargetRow : ObservableObject
 
         // The tooltip carries the raw IPStatus, which distinguishes "nothing answered" from
         // "a router actively told us it could not deliver".
-        StatusTooltip = BuildTooltip(s);
+        StatusTooltip = BuildTooltip(s, timeoutMs);
 
         HistoryVersion++;
         OnPropertyChanged(nameof(DownBadge));
     }
 
-    private static string BuildTooltip(in TargetSnapshot s)
+    private static string BuildTooltip(in TargetSnapshot s, int timeoutMs)
     {
         var parts = new List<string> { $"{s.Name} — {s.Status.Label()}" };
 
@@ -288,6 +298,18 @@ public sealed partial class TargetRow : ObservableObject
 
         if (s.DownFor is { } down) parts.Add($"Down for {FormatSpan(down)}");
         if (s.Stats.HasData) parts.Add($"Jitter {s.Stats.JitterMs:F1} ms over {s.Stats.Samples} samples");
+
+        // Answers the question avg/min/max cannot: those columns only ever see successful replies,
+        // so a probe that hits the timeout never touches max — max can look perfectly reasonable
+        // on a link where the timeout itself is too tight, with only Loss% moving and nothing on
+        // screen saying why. Shown only when it has actually happened, on the same "don't state
+        // the unremarkable" rule as the jitter and failure-streak lines beside it.
+        if (s.Stats.TimeoutSamples > 0)
+        {
+            parts.Add(
+                $"{s.Stats.TimeoutSamples} of {s.Stats.Samples} samples hit the {timeoutMs} ms timeout");
+        }
+
         if (s.ConsecutiveFailures > 0) parts.Add($"{s.ConsecutiveFailures} consecutive failures");
         if (CertificateLine(s.Certificate) is { } cert) parts.Add(cert);
 

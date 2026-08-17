@@ -31,9 +31,11 @@ internal static class SelfTest
             AvailabilityOverDays();
             RingBufferRolls();
             RingBufferIgnoresInactiveSamples();
+            RingBufferTimeoutIsInvisibleToMinMax();
             StatusMapping();
             FailedProbeKeepsTargetAddress();
             SuspendFreezesCountersAndAlerts();
+            PerHostTimeoutOverride();
             PerHostFailureThreshold();
             ThresholdLoweredMidOutage();
             ConcurrencyCeilingFollowsSettings();
@@ -715,6 +717,50 @@ internal static class SelfTest
         var stats = ring.Stats();
         Check("ring: suspended/paused excluded from window", stats.Samples == 2);
         Check("ring: loss is 50% of counted samples", Math.Abs(stats.LossPercent - 50) < 0.001);
+        Check("ring: the one timeout is counted", stats.TimeoutSamples == 1);
+    }
+
+    /// <summary>
+    /// Reproduces the report that started this: a target with a tight per-target timeout showed
+    /// "max 332 ms" and was read as proof a 500 ms timeout had headroom to spare, while Loss% was
+    /// quietly climbing. avg/min/max only ever see successful replies — a timed-out probe carries
+    /// no RTT and is skipped by the max calculation entirely — so max can never exceed whatever the
+    /// timeout is set to, no matter how bad the link actually is. TimeoutSamples exists to answer
+    /// the question max cannot.
+    /// </summary>
+    private static void RingBufferTimeoutIsInvisibleToMinMax()
+    {
+        var ring = new RingBuffer(20);
+        var now = DateTimeOffset.Now;
+        long tick = 0;
+
+        // Every successful reply lands comfortably under a 500 ms timeout.
+        for (var i = 0; i < 6; i++)
+            ring.Add(ProbeResult.Ok(280 + i * 8, System.Net.IPAddress.Loopback, tick++, now));
+
+        // Two probes exceed it and time out — no RTT recorded, by construction.
+        ring.Add(ProbeResult.Fail(TargetStatus.Timeout, tick++, now));
+        ring.Add(ProbeResult.Fail(TargetStatus.Timeout, tick++, now));
+
+        var stats = ring.Stats();
+
+        Check("ring: max reflects only successful replies", stats.MaxMs == 320);
+        Check("ring: timeouts are invisible to max, exactly the failure mode reported",
+            stats.MaxMs < 500);
+        Check("ring: but loss and the timeout count both show it",
+            Math.Abs(stats.LossPercent - 25) < 0.001 && stats.TimeoutSamples == 2);
+
+        // A refusal or an unreachable response is not "the timeout was too tight" and must not be
+        // counted as one — the tooltip line this feeds would otherwise blame the wrong setting.
+        ring.Clear();
+        ring.Add(ProbeResult.Ok(50, System.Net.IPAddress.Loopback, tick++, now));
+        ring.Add(ProbeResult.Fail(TargetStatus.Refused, tick++, now));
+        ring.Add(ProbeResult.Fail(TargetStatus.Unreachable, tick++, now));
+        ring.Add(ProbeResult.Fail(TargetStatus.DnsFail, tick++, now));
+
+        var mixed = ring.Stats();
+        Check("ring: only genuine timeouts count, not other failure kinds",
+            mixed.Samples == 4 && mixed.TimeoutSamples == 0);
     }
 
     private static void StatusMapping()
@@ -889,6 +935,28 @@ internal static class SelfTest
     /// flaky WAN link and a LAN switch at the same time.
     /// </para>
     /// </summary>
+    /// <summary>
+    /// The value the reported bug turned on: a target's effective timeout is the per-target
+    /// override when it has one, and the global default otherwise. Trivial in isolation, but it is
+    /// exactly the number the tooltip fix reads to explain a Loss% climb, so getting it from the
+    /// wrong place would make the new line lie just as confidently as max used to.
+    /// </summary>
+    private static void PerHostTimeoutOverride()
+    {
+        var settings = new Settings { TimeoutMs = 2000 };
+
+        var overridden = new PingTarget(
+            new TargetConfig { Name = "wan", Address = "10.2.10.10", TimeoutMs = 500 }, settings);
+        Check("timeout: per-host override wins", overridden.TimeoutMsFrom(settings) == 500);
+
+        var inherited = new PingTarget(
+            new TargetConfig { Name = "lan", Address = "10.1.10.1" }, settings);
+        Check("timeout: falls back to the global default", inherited.TimeoutMsFrom(settings) == 2000);
+
+        overridden.Dispose();
+        inherited.Dispose();
+    }
+
     private static void PerHostFailureThreshold()
     {
         var settings = new Settings { FailuresBeforeDown = 3 };

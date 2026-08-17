@@ -280,6 +280,13 @@ public sealed class PingTarget : IDisposable
 
     public int IntervalFrom(Settings s) => Config.IntervalMs ?? s.IntervalMs;
 
+    /// <summary>
+    /// Effective per-probe timeout: the per-target override, else the global setting. Same value
+    /// <see cref="OptionsFrom"/> hands the probe — exposed separately so the UI can state it
+    /// without reaching into <see cref="ProbeOptions"/> for one field.
+    /// </summary>
+    public int TimeoutMsFrom(Settings s) => Config.TimeoutMs ?? s.TimeoutMs;
+
     /// <summary>Effective degraded thresholds: per-target overrides, else the global defaults.</summary>
     public DegradeThresholds ThresholdsFrom(Settings s) => new(
         Config.DegradedLatencyMs ?? s.DegradedLatencyMs,

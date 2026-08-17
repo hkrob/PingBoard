@@ -82,7 +82,7 @@ public sealed class RingBuffer
 
         if (take == 0) return RollingStats.Empty;
 
-        int ok = 0, counted = 0, min = int.MaxValue, max = 0;
+        int ok = 0, counted = 0, timedOut = 0, min = int.MaxValue, max = 0;
         long sum = 0;
 
         for (var i = 0; i < take; i++)
@@ -93,6 +93,16 @@ public sealed class RingBuffer
             // pollute the loss percentage.
             if (r.Status.IsInactive()) continue;
             counted++;
+
+            // Counted before the OK filter below, and independently of it: a probe that hit the
+            // configured timeout is never OK, but every failure kind lands in Loss% together and
+            // this is the one worth telling apart from a refusal or a DNS failure. It exists
+            // because avg/min/max only ever see successful replies — RttMs is -1 on a timeout and
+            // skipped below — so max can never exceed the timeout no matter how bad the link is,
+            // and a loss percentage alone does not say why. Without this a timeout set too tight
+            // for a genuinely slow link is invisible: max looks fine, loss looks like "something",
+            // and there is nothing on screen that says the ceiling itself is the problem.
+            if (r.Status == TargetStatus.Timeout) timedOut++;
 
             if (!r.Status.IsOk()) continue;
             ok++;
@@ -109,6 +119,7 @@ public sealed class RingBuffer
         return new RollingStats(
             Samples: counted,
             OkSamples: ok,
+            TimeoutSamples: timedOut,
             LossPercent: 100d * (counted - ok) / counted,
             MinMs: min == int.MaxValue ? 0 : min,
             MaxMs: max,
@@ -193,6 +204,11 @@ public sealed class RingBuffer
 
 /// <param name="Samples">Probes considered, excluding paused/suspended.</param>
 /// <param name="OkSamples">Probes that got a reply.</param>
+/// <param name="TimeoutSamples">
+/// Probes that hit the configured timeout specifically, as opposed to a refusal, an unreachable
+/// response, or a DNS failure. The one failure kind whose fix is "raise the timeout" rather than
+/// "look at the network" — see the note where this is computed.
+/// </param>
 /// <param name="LossPercent">
 /// Rolling loss over the window. This is the number worth reading day to day — a lifetime
 /// cumulative count is dragged down forever by an outage three days ago.
@@ -200,13 +216,14 @@ public sealed class RingBuffer
 public readonly record struct RollingStats(
     int Samples,
     int OkSamples,
+    int TimeoutSamples,
     double LossPercent,
     int MinMs,
     int MaxMs,
     double AvgMs,
     double JitterMs)
 {
-    public static readonly RollingStats Empty = new(0, 0, 0, 0, 0, 0, 0);
+    public static readonly RollingStats Empty = new(0, 0, 0, 0, 0, 0, 0, 0);
 
     public bool HasData => Samples > 0;
 }
