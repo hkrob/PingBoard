@@ -683,8 +683,17 @@ public sealed partial class BoardView : UserControl
 
             item.Click += (s, _) =>
             {
-                if (s is ToggleMenuFlyoutItem { Tag: string columnId } toggle)
-                    ColumnLayout.Instance.SetVisible(columnId, toggle.IsChecked);
+                if (s is not ToggleMenuFlyoutItem { Tag: string columnId } toggle) return;
+
+                ColumnLayout.Instance.SetVisible(columnId, toggle.IsChecked);
+
+                // Showing or hiding a column changes how much room every other visible column
+                // could use, not just the one just toggled — hiding a wide column frees space the
+                // others could grow into, showing one takes space away from them. FitColumnsNow
+                // re-measures every currently-visible column for exactly this reason, ignoring the
+                // normal throttle so the board reflows immediately rather than up to two seconds
+                // later.
+                Vm.FitColumnsNow();
             };
 
             ColumnsFlyout.Items.Add(item);
