@@ -529,9 +529,40 @@ public sealed class ProbeScheduler : IAsyncDisposable
         {
             // Shutting down.
         }
-        catch (Exception)
+        catch (Exception ex)
         {
-            // Best-effort by definition.
+            // Not merely best-effort: TryBeginCertCheck already committed the *next* slot, hours
+            // away, the moment it let this attempt through — so an exception that lands here rather
+            // than inside CertificateCheck.InspectAsync's own narrower catches used to leave the
+            // target stranded for the rest of that window: certificate never read, tooltip silent,
+            // next attempt not for hours.
+            //
+            // The gap is real and confirmed, not hypothetical: InspectAsync's catch list is
+            // SocketException / IOException / AuthenticationException, and a target address with an
+            // out-of-range port throws ArgumentOutOfRangeException straight through it — verified
+            // directly rather than assumed. The realistic flaky-link cases (a connection reset mid-
+            // handshake, a server that answers but never speaks TLS) are already safely caught
+            // inside InspectAsync and return a Failed result; this is the backstop for what isn't,
+            // on the same two-layer pattern IcmpProbe/TcpProbe/HttpProbe already use: narrow catches
+            // at the probe, a broad one at the scheduler.
+            //
+            // Recording the failure here, in the same place that would otherwise have swallowed it,
+            // means every path through this method now ends in one of the two explicit
+            // SetCertificate calls above or this one — never in silence — so a short retry is
+            // guaranteed regardless of what actually went wrong.
+            try
+            {
+                target.SetCertificate(
+                    CertificateInfo.Failed(Describe(ex), DateTimeOffset.Now),
+                    settings.CertWarnDays,
+                    RetryMinutes);
+            }
+            catch (Exception)
+            {
+                // SetCertificate only ever takes a lock and assigns fields, but this handler exists
+                // to be the last line of defence for the certificate path — it must not itself be
+                // the thing that takes anything down.
+            }
         }
         finally
         {
@@ -541,6 +572,17 @@ public sealed class ProbeScheduler : IAsyncDisposable
 
     /// <summary>How soon to retry a certificate read that failed outright.</summary>
     private const int RetryMinutes = 10;
+
+    /// <summary>
+    /// A short reason for the tooltip, for the exception types that reach here rather than one of
+    /// <see cref="CertificateCheck"/>'s own narrower catches. Deliberately generic — this path
+    /// exists to catch what was not anticipated, so it cannot claim to know exactly what happened.
+    /// </summary>
+    private static string Describe(Exception ex) => ex switch
+    {
+        ObjectDisposedException => "connection closed unexpectedly",
+        _ => "unexpected error reading certificate",
+    };
 
     private async Task ReverseLookupAsync(PingTarget target, System.Net.IPAddress address, CancellationToken ct)
     {

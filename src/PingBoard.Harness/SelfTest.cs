@@ -41,6 +41,7 @@ internal static class SelfTest
             ConcurrencyCeilingFollowsSettings();
             AlertSecretsAndValidation();
             AlertConfigSurvivesAutosave(scratch);
+            CertificateReadFailureIsNeverSilent();
             WebhookDeliversATransition();
             TraceRouteFindsThePath();
             TabsGroupWithoutGating(scratch);
@@ -1067,6 +1068,53 @@ internal static class SelfTest
         Check("concurrency: a changed ceiling takes effect", scheduler.AvailableConcurrency == 9);
 
         _ = scheduler.DisposeAsync().AsTask().Wait(2000);
+    }
+
+    /// <summary>
+    /// Reproduces the reported symptom end to end: an HTTPS target whose certificate never gets
+    /// read leaves both board columns blank with no explanation and no retry for hours, because
+    /// <c>TryBeginCertCheck</c> commits the next attempt far in the future the moment it lets this
+    /// one through — before the read has even happened.
+    /// <para>
+    /// An out-of-range port is the deterministic, network-free way to prove it: verified directly
+    /// (in a throwaway harness against the real <c>CertificateCheck.InspectAsync</c>) to throw
+    /// <see cref="ArgumentOutOfRangeException"/>, a type outside that method's own catch list. Real
+    /// flaky-link failures — a connection reset mid-handshake, a server that answers but never
+    /// speaks TLS — were checked the same way and are already caught safely inside InspectAsync
+    /// with a normal Failed result, so they were never the bug; this is the narrower, confirmed gap
+    /// behind it.
+    /// </para>
+    /// </summary>
+    private static void CertificateReadFailureIsNeverSilent()
+    {
+        var settings = new Settings { IntervalMs = 250, TimeoutMs = 300, CertCheckHours = 1 };
+
+        // A literal address, so DNS resolution is instant and cannot be the thing under test.
+        var config = new TargetConfig
+        {
+            Name = "badport", Address = "127.0.0.1", Probe = ProbeKind.Https, Port = 70000,
+        };
+
+        var target = new PingTarget(config, settings);
+        var scheduler = new ProbeScheduler(settings);
+        scheduler.AddTarget(target);
+        scheduler.Start();
+
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (target.Snapshot().Certificate is null && DateTime.UtcNow < deadline)
+            Task.Delay(50).Wait();
+
+        var cert = target.Snapshot().Certificate;
+
+        Check("cert failure: an exception outside InspectAsync's own catches still records a result",
+            cert is not null);
+        Check("cert failure: recorded as a failure, not fabricated as a success",
+            cert is { HasCertificate: false });
+        Check("cert failure: the reason is visible rather than silent — this is the whole fix",
+            cert is { Error.Length: > 0 });
+
+        _ = scheduler.DisposeAsync().AsTask().Wait(2000);
+        target.Dispose();
     }
 
     /// <summary>
