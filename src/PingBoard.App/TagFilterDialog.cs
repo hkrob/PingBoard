@@ -5,7 +5,7 @@ using PingBoard.App.ViewModels;
 namespace PingBoard.App;
 
 /// <summary>
-/// Picks which tags narrow a tab's membership.
+/// Picks which tags turn a tab into a saved view — see <see cref="PingBoard.Core.TabConfig.SelectedTags"/>.
 /// <para>
 /// A checkbox per tag currently in use anywhere on the board, not a text box — tags are assigned
 /// to targets in <see cref="TargetDialog"/>, so this only ever needs to choose among ones that

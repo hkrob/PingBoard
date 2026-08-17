@@ -50,11 +50,13 @@ public sealed class TabConfig
     public bool Muted { get; set; }
 
     /// <summary>
-    /// Narrows this tab to targets carrying at least one of these tags, on top of its normal
-    /// membership rather than instead of it — a target still belongs to exactly one tab
-    /// (<see cref="TargetConfig.Tab"/>); this only decides which of that tab's own members are
-    /// currently shown. Empty means no filter, which is every board's starting state and stays
-    /// that way until a tab's filter is actually set.
+    /// The moment this is non-empty, the tab stops being a plain membership group and becomes a
+    /// saved view over the <em>whole</em> board: it shows every target carrying at least one of
+    /// these tags, regardless of what its own <see cref="TargetConfig.Tab"/> actually says — not
+    /// just the ones someone also remembered to move onto this tab by hand. A target still belongs
+    /// to exactly one tab for probing, muting and enable/disable purposes; this only changes which
+    /// targets a filtered tab <em>displays</em>. Empty means no filter, in which case the tab shows
+    /// only its own members exactly as if tags did not exist — every board's starting state.
     /// <para>
     /// Assign a whole new list rather than mutating this one in place — <see cref="Clone"/> is a
     /// shallow copy, so a clone's list is still the same object as the original's until replaced.
@@ -63,9 +65,10 @@ public sealed class TabConfig
     public List<string> SelectedTags { get; set; } = [];
 
     /// <summary>
-    /// As <see cref="SelectedTags"/>, but against <see cref="TargetConfig.Site"/> instead — narrows
-    /// this tab to targets at one of these sites, on top of its normal membership. Independent of
-    /// the tag filter: when both are set, a target must pass both to show. Empty means no filter.
+    /// As <see cref="SelectedTags"/>, but against <see cref="TargetConfig.Site"/> instead —
+    /// non-empty turns this tab into a saved view over targets at one of these sites, wherever
+    /// their own Tab points. Independent of the tag filter: when both are set, a target must pass
+    /// both to show. Empty means no filter.
     /// <para>
     /// Assign a whole new list rather than mutating this one in place — see <see cref="Clone"/>.
     /// </para>

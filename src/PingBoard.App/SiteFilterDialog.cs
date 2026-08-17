@@ -5,7 +5,7 @@ using PingBoard.App.ViewModels;
 namespace PingBoard.App;
 
 /// <summary>
-/// Picks which sites narrow a tab's membership — the site analogue of <see cref="TagFilterDialog"/>,
+/// Picks which sites turn a tab into a saved view — the site analogue of <see cref="TagFilterDialog"/>,
 /// independent of it (see <see cref="PingBoard.Core.TabConfig.SelectedSites"/>).
 /// <para>
 /// A checkbox per registered site rather than a text box, drawn from the site registry

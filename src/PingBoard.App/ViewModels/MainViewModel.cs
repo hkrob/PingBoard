@@ -114,25 +114,8 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     /// <summary>True when this row passes the tab, text and status filters.</summary>
     private bool Passes(TargetRow row)
     {
-        if (!string.Equals(TabConfig.Normalise(row.Target.Config.Tab), _selectedTab, StringComparison.OrdinalIgnoreCase))
-            return false;
-
         var tabConfig = _tabs.Find(t => string.Equals(t.Name, _selectedTab, StringComparison.OrdinalIgnoreCase));
-        if (tabConfig is { SelectedTags.Count: > 0 })
-        {
-            var tags = row.Target.Config.Tags;
-            var matches = false;
-            foreach (var tag in tabConfig.SelectedTags)
-                if (tags.Contains(tag, StringComparer.OrdinalIgnoreCase)) { matches = true; break; }
-
-            if (!matches) return false;
-        }
-
-        // Independent of the tag filter above — a target must pass both when both are set, not
-        // either.
-        if (tabConfig is { SelectedSites.Count: > 0 } &&
-            !tabConfig.SelectedSites.Contains(row.Target.Config.Site, StringComparer.OrdinalIgnoreCase))
-            return false;
+        if (!BelongsToTab(row, tabConfig, _selectedTab)) return false;
 
         if (FilterText is { Length: > 0 } text)
         {
@@ -152,6 +135,46 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             3 => status is TargetStatus.Paused or TargetStatus.Suspended or TargetStatus.Unknown,
             _ => true,
         };
+    }
+
+    /// <summary>
+    /// Whether a row shows on a given tab.
+    /// <para>
+    /// A tab with no tag or site filter set is a plain group: only its own members show, exactly
+    /// as if tags and sites did not exist. The moment either filter is set, the tab stops being a
+    /// membership list and becomes a saved view over the whole board — a "Critical" tab filtered
+    /// to the <c>critical</c> tag shows every target carrying that tag, wherever its own
+    /// <see cref="TargetConfig.Tab"/> actually points, not just the ones someone also remembered
+    /// to move onto this tab by hand. That is a deliberate reversal of "filter narrows this tab's
+    /// own membership" — a filtered tab is meant to answer "show me everything matching X",
+    /// and restricting that to members-only defeats the point for anyone who tags things without
+    /// also re-tabbing them.
+    /// </para>
+    /// </summary>
+    private static bool BelongsToTab(TargetRow row, TabConfig? tabConfig, string tabName)
+    {
+        if (tabConfig is { } tc && (tc.SelectedTags.Count > 0 || tc.SelectedSites.Count > 0))
+            return MatchesTagAndSiteFilter(row, tc);
+
+        return string.Equals(TabConfig.Normalise(row.Target.Config.Tab), tabName, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>True when a row satisfies both a tab's tag filter and its site filter — each is a
+    /// no-op when empty, and the two are independent (a target must pass both when both are set).</summary>
+    private static bool MatchesTagAndSiteFilter(TargetRow row, TabConfig tab)
+    {
+        if (tab.SelectedTags.Count > 0)
+        {
+            var tags = row.Target.Config.Tags;
+            var matches = false;
+            foreach (var tag in tab.SelectedTags)
+                if (tags.Contains(tag, StringComparer.OrdinalIgnoreCase)) { matches = true; break; }
+
+            if (!matches) return false;
+        }
+
+        return tab.SelectedSites.Count == 0 ||
+               tab.SelectedSites.Contains(row.Target.Config.Site, StringComparer.OrdinalIgnoreCase);
     }
 
     /// <summary>The tab strip is hidden entirely until there is more than one group to choose.</summary>
@@ -609,13 +632,13 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         SaveConfig();
     }
 
-    /// <summary>The tags currently narrowing a tab, for the filter picker to pre-check.</summary>
+    /// <summary>The tags a tab's filter is currently set to, for the filter picker to pre-check.</summary>
     public IReadOnlyList<string> GetTabTags(TabItem tab) =>
         _tabs.Find(t => string.Equals(t.Name, tab.Name, StringComparison.OrdinalIgnoreCase))?.SelectedTags ?? [];
 
     /// <summary>
-    /// Narrows a tab to targets carrying at least one of <paramref name="tags"/>, on top of its
-    /// normal membership, and persists the choice. An empty list clears the filter.
+    /// Sets a tab's tag filter and persists the choice — see <see cref="TabConfig.SelectedTags"/>
+    /// for what a non-empty filter does to what the tab shows. An empty list clears it.
     /// </summary>
     public void SetTabTags(TabItem tab, IReadOnlyList<string> tags)
     {
@@ -628,13 +651,13 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         SaveConfig();
     }
 
-    /// <summary>The sites currently narrowing a tab, for the filter picker to pre-check.</summary>
+    /// <summary>The sites a tab's filter is currently set to, for the filter picker to pre-check.</summary>
     public IReadOnlyList<string> GetTabSites(TabItem tab) =>
         _tabs.Find(t => string.Equals(t.Name, tab.Name, StringComparison.OrdinalIgnoreCase))?.SelectedSites ?? [];
 
     /// <summary>
-    /// Narrows a tab to targets at one of <paramref name="sites"/>, independent of the tag filter —
-    /// see <see cref="TabConfig.SelectedSites"/>. Persists the choice; an empty list clears it.
+    /// Sets a tab's site filter and persists the choice, independent of the tag filter — see
+    /// <see cref="TabConfig.SelectedSites"/>. An empty list clears it.
     /// </summary>
     public void SetTabSites(TabItem tab, IReadOnlyList<string> sites)
     {
@@ -793,18 +816,26 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         }
     }
 
-    /// <summary>Refreshes each tab's tally. Called from the render tick, like everything else.</summary>
+    /// <summary>
+    /// Refreshes each tab's tally. Called from the render tick, like everything else.
+    /// <para>
+    /// Uses <see cref="BelongsToTab"/> rather than raw <see cref="TargetConfig.Tab"/> membership,
+    /// so a filtered tab's badge counts what it actually shows — a "Critical" tab pulling in
+    /// tagged targets from elsewhere on the board should say so on its own label, not report 0
+    /// while quietly showing several.
+    /// </para>
+    /// </summary>
     private void RefreshTabs()
     {
         foreach (var tab in Tabs)
         {
             var total = 0;
             var down = 0;
+            var config = _tabs.Find(t => string.Equals(t.Name, tab.Name, StringComparison.OrdinalIgnoreCase));
 
             foreach (var row in Rows)
             {
-                if (!string.Equals(TabConfig.Normalise(row.Target.Config.Tab), tab.Name, StringComparison.OrdinalIgnoreCase))
-                    continue;
+                if (!BelongsToTab(row, config, tab.Name)) continue;
 
                 total++;
                 if (row.Snapshot.Status.IsFailure()) down++;
