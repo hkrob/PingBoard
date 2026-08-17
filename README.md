@@ -218,6 +218,36 @@ would otherwise read as a permanently dead target. A completed TCP handshake als
 an echo reply does, and a *refused* connection is reported separately from a timeout — it means the
 host is up and the port is closed.
 
+### Sites
+
+A physical location — `Connaught`, `Northcliffe` — kept deliberately separate from a tab. A tab is a
+functional grouping chosen for the board; a site is a place. A tab can span several sites and a site
+can span several tabs, so the two are orthogonal rather than one being a kind of the other.
+
+```ini
+[Site:Connaught]
+Abbreviation=Conn
+
+[Target:core-switch]
+Address=10.1.10.1
+Site=Connaught
+```
+
+Set from the target dialog: pick an existing site from the dropdown and its abbreviation fills in
+from the registry; type a new one and it starts blank. The abbreviation lives once per site, not
+once per target — editing it on any one target at a site updates every other target there
+immediately, on disk and on the board, rather than drifting into `Conn` on one and `Connaught` on
+another depending on who typed what.
+
+Two columns carry it, `Site` and `Site Abbreviation`, hidden by default like the certificate
+columns. Both read `—` for a target with no site — never blank-as-in-empty-string, and never `no`:
+a target without one is not a target whose site is known to be nothing, and answering a question
+that was never asked is how a column ends up read as more certain than it is.
+
+Unlike a tab, a target with no site is a normal, common state rather than falling back to a default
+group — most targets are not tied to a physical location worth naming, and there is nothing for
+them to fall back to.
+
 ### HTTP probes
 
 `Probe=http` and `Probe=https` go one layer further and judge the status code:
