@@ -128,6 +128,12 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             if (!matches) return false;
         }
 
+        // Independent of the tag filter above — a target must pass both when both are set, not
+        // either.
+        if (tabConfig is { SelectedSites.Count: > 0 } &&
+            !tabConfig.SelectedSites.Contains(row.Target.Config.Site, StringComparer.OrdinalIgnoreCase))
+            return false;
+
         if (FilterText is { Length: > 0 } text)
         {
             var hit = row.Name.Contains(text, StringComparison.OrdinalIgnoreCase)
@@ -475,7 +481,12 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
         Tabs.Clear();
         foreach (var tab in _tabs)
-            Tabs.Add(new TabItem(tab.Name) { IsEnabled = tab.Enabled, IsMuted = tab.Muted, HasTagFilter = tab.SelectedTags.Count > 0 });
+            Tabs.Add(new TabItem(tab.Name)
+            {
+                IsEnabled = tab.Enabled,
+                IsMuted = tab.Muted,
+                HasFilter = tab.SelectedTags.Count > 0 || tab.SelectedSites.Count > 0,
+            });
 
         if (!_tabs.Any(t => string.Equals(t.Name, _selectedTab, StringComparison.OrdinalIgnoreCase)))
             _selectedTab = _tabs[0].Name;
@@ -611,7 +622,26 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         var config = _tabs.Find(t => string.Equals(t.Name, tab.Name, StringComparison.OrdinalIgnoreCase));
         if (config is not null) config.SelectedTags = [.. tags];
 
-        tab.HasTagFilter = tags.Count > 0;
+        tab.HasFilter = tags.Count > 0 || GetTabSites(tab).Count > 0;
+
+        RebuildVisibleRows();
+        SaveConfig();
+    }
+
+    /// <summary>The sites currently narrowing a tab, for the filter picker to pre-check.</summary>
+    public IReadOnlyList<string> GetTabSites(TabItem tab) =>
+        _tabs.Find(t => string.Equals(t.Name, tab.Name, StringComparison.OrdinalIgnoreCase))?.SelectedSites ?? [];
+
+    /// <summary>
+    /// Narrows a tab to targets at one of <paramref name="sites"/>, independent of the tag filter —
+    /// see <see cref="TabConfig.SelectedSites"/>. Persists the choice; an empty list clears it.
+    /// </summary>
+    public void SetTabSites(TabItem tab, IReadOnlyList<string> sites)
+    {
+        var config = _tabs.Find(t => string.Equals(t.Name, tab.Name, StringComparison.OrdinalIgnoreCase));
+        if (config is not null) config.SelectedSites = [.. sites];
+
+        tab.HasFilter = sites.Count > 0 || GetTabTags(tab).Count > 0;
 
         RebuildVisibleRows();
         SaveConfig();
@@ -637,6 +667,30 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             result.Sort(StringComparer.OrdinalIgnoreCase);
             return result;
         }
+    }
+
+    /// <summary>
+    /// Creates a new, empty tab and selects it — the one way to start a tab before any target
+    /// points at it, for the "+" on the tab strip. Every other path (<see cref="EnsureTab"/>) only
+    /// ever creates a tab as a side effect of a target naming one. Returns why it could not be
+    /// done, or null on success.
+    /// </summary>
+    public string? CreateTab(string name)
+    {
+        var trimmed = name.Trim();
+        if (trimmed.Length == 0) return "Enter a name.";
+
+        if (_tabs.Any(t => string.Equals(t.Name, trimmed, StringComparison.OrdinalIgnoreCase)))
+            return $"A tab named “{trimmed}” already exists.";
+
+        _tabs.Add(new TabConfig { Name = trimmed, Order = _tabs.Count });
+        var newTab = new TabItem(trimmed);
+        Tabs.Add(newTab);
+
+        SelectTab(newTab);
+        RefreshTabs();
+        SaveConfig();
+        return null;
     }
 
     /// <summary>

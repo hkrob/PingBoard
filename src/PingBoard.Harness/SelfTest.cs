@@ -47,6 +47,7 @@ internal static class SelfTest
             TabsGroupWithoutGating(scratch);
             SitesAreIndependentOfTabs(scratch);
             TagsNarrowTabMembership(scratch);
+            SitesNarrowTabMembership(scratch);
             UpdateVersionComparison();
             HttpProbeJudgesTheStatusCode();
             RecentStatsWindow();
@@ -1402,6 +1403,47 @@ internal static class SelfTest
             !legacyText.Contains("Site=", StringComparison.OrdinalIgnoreCase));
         Check("sites: a site-free config gains no [Site:] section",
             !legacyText.Contains("[Site:", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static void SitesNarrowTabMembership(string dir)
+    {
+        var path = Path.Combine(dir, "site-filter.ini");
+
+        var targets = new List<TargetConfig>
+        {
+            new() { Name = "gw", Address = "10.1.10.1", Tab = "LAN", Site = "Connaught" },
+            new() { Name = "printer", Address = "10.1.10.5", Tab = "LAN", Site = "Northcliffe" },
+            new() { Name = "wan", Address = "1.1.1.1", Tab = "WAN", Site = "Connaught" },
+            new() { Name = "stray", Address = "8.8.8.8", Tab = "LAN" },   // no site at all
+        };
+
+        var tabs = new List<TabConfig>
+        {
+            new() { Name = "LAN", Order = 0, SelectedSites = ["Connaught"] },
+            new() { Name = "WAN", Order = 1 },   // no filter
+        };
+
+        ConfigStore.Save(path, new Settings(), targets, null, tabs);
+        var loaded = ConfigStore.Load(path);
+
+        Check("site filter: a tab's selected-sites filter round-trips",
+            loaded.Tabs.First(t => t.Name == "LAN").SelectedSites.SequenceEqual(["Connaught"]));
+        Check("site filter: a tab with no filter round-trips empty",
+            loaded.Tabs.First(t => t.Name == "WAN").SelectedSites.Count == 0);
+
+        // Autosave paths pass no tabs; they must not delete a tab's site filter.
+        ConfigStore.Save(path, new Settings(), targets);
+        Check("site filter: an autosave without tabs preserves a tab's site filter",
+            ConfigStore.Load(path).Tabs.First(t => t.Name == "LAN").SelectedSites.SequenceEqual(["Connaught"]));
+
+        // A board that never used a site filter must round-trip without gaining a SelectedSites key.
+        var legacy = Path.Combine(dir, "legacy-site-filter.ini");
+        ConfigStore.Save(legacy, new Settings(),
+            [new TargetConfig { Name = "old", Address = "1.2.3.4" }], null,
+            [new TabConfig { Name = "Solo", Order = 0 }]);
+        var legacyText = File.ReadAllText(legacy);
+        Check("site filter: a filter-free config gains no SelectedSites key",
+            !legacyText.Contains("SelectedSites=", StringComparison.OrdinalIgnoreCase));
     }
 
     private static void TagsNarrowTabMembership(string dir)

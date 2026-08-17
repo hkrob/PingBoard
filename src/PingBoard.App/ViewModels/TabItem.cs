@@ -46,15 +46,20 @@ public sealed partial class TabItem : ObservableObject
     /// </summary>
     [ObservableProperty] public partial Visibility MutedMarkVisibility { get; private set; } = Visibility.Collapsed;
 
-    /// <summary>True when this tab's SelectedTags is narrowing its membership. Set by <see cref="MainViewModel.SetTabTags"/>.</summary>
-    [ObservableProperty] public partial bool HasTagFilter { get; set; }
+    /// <summary>
+    /// True when either SelectedTags or SelectedSites is narrowing this tab's membership. Set by
+    /// <see cref="MainViewModel.SetTabTags"/> and <see cref="MainViewModel.SetTabSites"/> — one
+    /// glyph covers both, since what matters to the user is "this tab is not showing everything",
+    /// not which of the two dimensions did it.
+    /// </summary>
+    [ObservableProperty] public partial bool HasFilter { get; set; }
 
     /// <summary>
-    /// Filter-funnel glyph on a tab whose tag filter is active. Shown permanently, for the same
-    /// reason as <see cref="MutedMarkVisibility"/> — a filter narrowing what you see and forgotten
-    /// about is worse than one that never existed, because you are still trusting the full picture.
+    /// Filter-funnel glyph on a tab with an active filter. Shown permanently, for the same reason
+    /// as <see cref="MutedMarkVisibility"/> — a filter narrowing what you see and forgotten about is
+    /// worse than one that never existed, because you are still trusting the full picture.
     /// </summary>
-    [ObservableProperty] public partial Visibility TagFilterMarkVisibility { get; private set; } = Visibility.Collapsed;
+    [ObservableProperty] public partial Visibility FilterMarkVisibility { get; private set; } = Visibility.Collapsed;
 
     /// <summary>"LAN", or "LAN · 2 down" when something in it is failing.</summary>
     [ObservableProperty] public partial string Label { get; private set; } = "";
@@ -76,7 +81,7 @@ public sealed partial class TabItem : ObservableObject
         TabOpacity = IsEnabled ? 1.0 : 0.45;
         DisabledMarkVisibility = IsEnabled ? Visibility.Collapsed : Visibility.Visible;
         MutedMarkVisibility = IsMuted ? Visibility.Visible : Visibility.Collapsed;
-        TagFilterMarkVisibility = HasTagFilter ? Visibility.Visible : Visibility.Collapsed;
+        FilterMarkVisibility = HasFilter ? Visibility.Visible : Visibility.Collapsed;
         SelectionOpacity = selected ? 1.0 : 0.55;
     }
 }

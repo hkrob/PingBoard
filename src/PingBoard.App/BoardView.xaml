@@ -21,72 +21,85 @@
             <RowDefinition Height="Auto" />   <!-- status bar -->
         </Grid.RowDefinitions>
 
-        <!-- Tab strip. Hidden entirely while there is only one group, so a board that does not use
-             tabs looks exactly as it did before they existed. Each tab shows a live tally rather
-             than a bare name: the whole point of grouping is that you are not looking at most of
-             your hosts, and a tab that cannot say "2 down" would hide outages behind itself. -->
-        <ItemsControl Grid.Row="2"
-                      ItemsSource="{x:Bind Vm.Tabs, Mode=OneWay}"
-                      Visibility="{x:Bind Vm.TabStripVisibility, Mode=OneWay}"
-                      Padding="10,0,10,6">
-            <ItemsControl.ItemsPanel>
-                <ItemsPanelTemplate>
-                    <StackPanel Orientation="Horizontal" Spacing="4" />
-                </ItemsPanelTemplate>
-            </ItemsControl.ItemsPanel>
-            <ItemsControl.ItemTemplate>
-                <DataTemplate x:DataType="vm:TabItem">
-                    <Button Click="OnSelectTab"
-                            Background="Transparent"
-                            Padding="10,4"
-                            Opacity="{x:Bind TabOpacity, Mode=OneWay}"
-                            AutomationProperties.Name="{x:Bind Name, Mode=OneWay}">
-                        <StackPanel Orientation="Horizontal" Spacing="6">
-                            <TextBlock Text="&#xE711;"
-                                       FontFamily="Segoe Fluent Icons"
-                                       FontSize="{x:Bind vm:ColumnLayout.Instance.ChevronFontSize, Mode=OneWay}"
-                                       VerticalAlignment="Center"
-                                       Visibility="{x:Bind DisabledMarkVisibility, Mode=OneWay}" />
-                            <!-- A muted group you have forgotten about is worse than one that
-                                 never alerted, so the mark is permanent rather than a tooltip. -->
-                            <TextBlock Text="&#xE7ED;"
-                                       FontFamily="Segoe Fluent Icons"
-                                       FontSize="{x:Bind vm:ColumnLayout.Instance.ChevronFontSize, Mode=OneWay}"
-                                       VerticalAlignment="Center"
-                                       Visibility="{x:Bind MutedMarkVisibility, Mode=OneWay}" />
-                            <!-- A filter narrowing what this tab shows is easy to forget about once
-                                 set, so like the mute bell it stays visible rather than living only
-                                 in a tooltip. -->
-                            <TextBlock Text="&#xE71C;"
-                                       FontFamily="Segoe Fluent Icons"
-                                       FontSize="{x:Bind vm:ColumnLayout.Instance.ChevronFontSize, Mode=OneWay}"
-                                       VerticalAlignment="Center"
-                                       Visibility="{x:Bind TagFilterMarkVisibility, Mode=OneWay}" />
-                            <TextBlock Text="{x:Bind Label, Mode=OneWay}"
-                                       FontSize="12"
-                                       Opacity="{x:Bind SelectionOpacity, Mode=OneWay}" />
-                        </StackPanel>
-                        <Button.ContextFlyout>
-                            <MenuFlyout>
-                                <MenuFlyoutItem Text="Mute alerts for this tab" Click="OnMuteTab" />
-                                <MenuFlyoutItem Text="Unmute this tab" Click="OnUnmuteTab" />
-                                <MenuFlyoutSeparator />
-                                <MenuFlyoutItem Text="Enable this tab" Click="OnEnableTab" />
-                                <MenuFlyoutItem Text="Disable this tab (stops probing)" Click="OnDisableTab" />
-                                <MenuFlyoutSeparator />
-                                <MenuFlyoutItem Text="Filter by tags…" Click="OnFilterTabByTags" />
-                                <MenuFlyoutSeparator />
-                                <!-- Both offered even on the General tab, which refuses both with an
-                                     explanation on click — simpler and more honest than hiding the
-                                     option and leaving the user to guess why it is not there. -->
-                                <MenuFlyoutItem Text="Rename tab…" Click="OnRenameTab" />
-                                <MenuFlyoutItem Text="Delete tab…" Click="OnDeleteTab" />
-                            </MenuFlyout>
-                        </Button.ContextFlyout>
-                    </Button>
-                </DataTemplate>
-            </ItemsControl.ItemTemplate>
-        </ItemsControl>
+        <!-- Tab strip. The strip itself is hidden while there is only one group, so a board that
+             does not use tabs looks exactly as it did before they existed — but the "+" stays
+             visible regardless, since it is the only way to create the second tab in the first
+             place. Each tab shows a live tally rather than a bare name: the whole point of
+             grouping is that you are not looking at most of your hosts, and a tab that cannot say
+             "2 down" would hide outages behind itself. -->
+        <StackPanel Grid.Row="2" Orientation="Horizontal" Padding="10,0,10,6">
+            <ItemsControl ItemsSource="{x:Bind Vm.Tabs, Mode=OneWay}"
+                          Visibility="{x:Bind Vm.TabStripVisibility, Mode=OneWay}">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <StackPanel Orientation="Horizontal" Spacing="4" />
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="vm:TabItem">
+                        <Button Click="OnSelectTab"
+                                Background="Transparent"
+                                Padding="10,4"
+                                Opacity="{x:Bind TabOpacity, Mode=OneWay}"
+                                AutomationProperties.Name="{x:Bind Name, Mode=OneWay}">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <TextBlock Text="&#xE711;"
+                                           FontFamily="Segoe Fluent Icons"
+                                           FontSize="{x:Bind vm:ColumnLayout.Instance.ChevronFontSize, Mode=OneWay}"
+                                           VerticalAlignment="Center"
+                                           Visibility="{x:Bind DisabledMarkVisibility, Mode=OneWay}" />
+                                <!-- A muted group you have forgotten about is worse than one that
+                                     never alerted, so the mark is permanent rather than a tooltip. -->
+                                <TextBlock Text="&#xE7ED;"
+                                           FontFamily="Segoe Fluent Icons"
+                                           FontSize="{x:Bind vm:ColumnLayout.Instance.ChevronFontSize, Mode=OneWay}"
+                                           VerticalAlignment="Center"
+                                           Visibility="{x:Bind MutedMarkVisibility, Mode=OneWay}" />
+                                <!-- A filter narrowing what this tab shows is easy to forget about
+                                     once set, so like the mute bell it stays visible rather than
+                                     living only in a tooltip. -->
+                                <TextBlock Text="&#xE71C;"
+                                           FontFamily="Segoe Fluent Icons"
+                                           FontSize="{x:Bind vm:ColumnLayout.Instance.ChevronFontSize, Mode=OneWay}"
+                                           VerticalAlignment="Center"
+                                           Visibility="{x:Bind FilterMarkVisibility, Mode=OneWay}" />
+                                <TextBlock Text="{x:Bind Label, Mode=OneWay}"
+                                           FontSize="12"
+                                           Opacity="{x:Bind SelectionOpacity, Mode=OneWay}" />
+                            </StackPanel>
+                            <Button.ContextFlyout>
+                                <MenuFlyout>
+                                    <MenuFlyoutItem Text="Mute alerts for this tab" Click="OnMuteTab" />
+                                    <MenuFlyoutItem Text="Unmute this tab" Click="OnUnmuteTab" />
+                                    <MenuFlyoutSeparator />
+                                    <MenuFlyoutItem Text="Enable this tab" Click="OnEnableTab" />
+                                    <MenuFlyoutItem Text="Disable this tab (stops probing)" Click="OnDisableTab" />
+                                    <MenuFlyoutSeparator />
+                                    <MenuFlyoutItem Text="Filter by tags…" Click="OnFilterTabByTags" />
+                                    <MenuFlyoutItem Text="Filter by site…" Click="OnFilterTabBySite" />
+                                    <MenuFlyoutSeparator />
+                                    <!-- Both offered even on the General tab, which refuses both
+                                         with an explanation on click — simpler and more honest than
+                                         hiding the option and leaving the user to guess why it is
+                                         not there. -->
+                                    <MenuFlyoutItem Text="Rename tab…" Click="OnRenameTab" />
+                                    <MenuFlyoutItem Text="Delete tab…" Click="OnDeleteTab" />
+                                </MenuFlyout>
+                            </Button.ContextFlyout>
+                        </Button>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <Button Click="OnNewTab"
+                    Background="Transparent"
+                    Padding="8,4"
+                    ToolTipService.ToolTip="New tab"
+                    AutomationProperties.Name="New tab">
+                <TextBlock Text="&#xE710;" FontFamily="Segoe Fluent Icons"
+                           FontSize="{x:Bind vm:ColumnLayout.Instance.ChevronFontSize, Mode=OneWay}" />
+            </Button>
+        </StackPanel>
 
         <!-- Content is extended into the title bar, so the draggable region must be nominated
              explicitly (MainWindow calls SetTitleBar on this) or the window cannot be moved. -->

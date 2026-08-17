@@ -62,6 +62,16 @@ public sealed class TabConfig
     /// </summary>
     public List<string> SelectedTags { get; set; } = [];
 
+    /// <summary>
+    /// As <see cref="SelectedTags"/>, but against <see cref="TargetConfig.Site"/> instead — narrows
+    /// this tab to targets at one of these sites, on top of its normal membership. Independent of
+    /// the tag filter: when both are set, a target must pass both to show. Empty means no filter.
+    /// <para>
+    /// Assign a whole new list rather than mutating this one in place — see <see cref="Clone"/>.
+    /// </para>
+    /// </summary>
+    public List<string> SelectedSites { get; set; } = [];
+
     public TabConfig Clone() => (TabConfig)MemberwiseClone();
 
     /// <summary>Normalises a tab name, mapping blank onto the default group.</summary>

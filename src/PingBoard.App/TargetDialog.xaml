@@ -88,9 +88,11 @@
             <TextBlock FontSize="12" Opacity="0.65" TextWrapping="Wrap"
                        Text="A site is a place, not a purpose — a tab of &quot;Public DNS&quot; can span several sites, and a site can span several tabs. The abbreviation is shared by every target at the site: changing it here changes what every one of them shows." />
 
-            <TextBox x:Name="TagsBox"
-                     Header="Tags (optional)"
-                     PlaceholderText="critical, dns, external" />
+            <AutoSuggestBox x:Name="TagsBox"
+                            Header="Tags (optional)"
+                            PlaceholderText="critical, dns, external"
+                            TextChanged="OnTagsTextChanged"
+                            SuggestionChosen="OnTagsSuggestionChosen" />
             <TextBlock FontSize="12" Opacity="0.65" TextWrapping="Wrap"
                        Text="Comma-separated. A target can carry any number of tags, and a tab can narrow itself to just the ones carrying a given tag — see &quot;Filter by tags…&quot; on a tab's right-click menu." />
 

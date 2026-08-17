@@ -28,6 +28,9 @@ public sealed partial class TargetDialog : ContentDialog
         // Same for sites, plus the abbreviation registry SelectionChanged reads from.
         foreach (var site in vm.Sites) SiteBox.Items.Add(site.Name);
 
+        string tabText;
+        var siteText = "";
+
         if (editing is not null)
         {
             var config = editing.Target.Config;
@@ -38,10 +41,10 @@ public sealed partial class TargetDialog : ContentDialog
             EnabledSwitch.IsOn = config.Enabled;
             PathBox.Text = config.Path;
             SetOptional(ExpectStatusBox, config.ExpectStatus);
-            TabBox.Text = TabConfig.Normalise(config.Tab);
+            tabText = TabConfig.Normalise(config.Tab);
             MaintenanceBox.Text = config.Maintenance;
 
-            SiteBox.Text = config.Site;
+            siteText = config.Site;
             SiteAbbreviationBox.Text = vm.Sites
                 .FirstOrDefault(s => string.Equals(s.Name, config.Site, StringComparison.OrdinalIgnoreCase))
                 ?.Abbreviation ?? "";
@@ -70,8 +73,20 @@ public sealed partial class TargetDialog : ContentDialog
 
             // A new target lands in whichever tab is on screen, which is almost always the one
             // the user meant.
-            TabBox.Text = vm.SelectedTabName;
+            tabText = vm.SelectedTabName;
         }
+
+        // Deferred to Loaded rather than set above: an editable ComboBox's Text, assigned before
+        // its template has been applied, updates the dependency property (UI Automation reads it
+        // back fine) without updating the visible inner TextBox, so the box looks empty until the
+        // user interacts with it. TabBox masked this for a long time because its placeholder
+        // ("General") coincides with the common case; SiteBox's placeholder ("none") does not,
+        // which is what surfaced it as "the site isn't populated" on edit.
+        Loaded += (_, _) =>
+        {
+            TabBox.Text = tabText;
+            SiteBox.Text = siteText;
+        };
 
         NameBox.TextChanged += (_, _) => _nameEditedByUser = true;
         UpdateProbeUi();
@@ -125,6 +140,36 @@ public sealed partial class TargetDialog : ContentDialog
 
         var match = _vm.Sites.FirstOrDefault(s => string.Equals(s.Name, name, StringComparison.OrdinalIgnoreCase));
         if (match is not null) SiteAbbreviationBox.Text = match.Abbreviation;
+    }
+
+    /// <summary>
+    /// Suggests from every tag already in use, matched against the segment currently being typed
+    /// — the text after the last comma — so picking a second or third tag suggests against just
+    /// that one rather than the whole comma-separated box.
+    /// </summary>
+    private void OnTagsTextChanged(AutoSuggestBox sender, AutoSuggestBoxTextChangedEventArgs args)
+    {
+        if (args.Reason != AutoSuggestionBoxTextChangeReason.UserInput) return;
+
+        var fragment = CurrentTagFragment(sender.Text);
+        sender.ItemsSource = fragment.Length == 0
+            ? null
+            : _vm.AllKnownTags.Where(t => t.Contains(fragment, StringComparison.OrdinalIgnoreCase)).ToList();
+    }
+
+    /// <summary>Replaces just the segment being typed with the chosen tag, leaving the rest intact.</summary>
+    private void OnTagsSuggestionChosen(AutoSuggestBox sender, AutoSuggestBoxSuggestionChosenEventArgs args)
+    {
+        var text = sender.Text;
+        var lastComma = text.LastIndexOf(',');
+        var head = lastComma >= 0 ? text[..(lastComma + 1)] + " " : "";
+        sender.Text = head + (string)args.SelectedItem + ", ";
+    }
+
+    private static string CurrentTagFragment(string text)
+    {
+        var lastComma = text.LastIndexOf(',');
+        return (lastComma >= 0 ? text[(lastComma + 1)..] : text).Trim();
     }
 
     private static int IndexFor(ProbeKind kind) => kind switch

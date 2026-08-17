@@ -480,6 +480,22 @@ public sealed partial class BoardView : UserControl
         catch (Exception ex) { CrashLog.Write(ex); }
     }
 
+    private async void OnFilterTabBySite(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            if (sender is FrameworkElement { DataContext: TabItem tab })
+                await SiteFilterDialog.ShowAsync(XamlRoot, Vm, tab);
+        }
+        catch (Exception ex) { CrashLog.Write(ex); }
+    }
+
+    private async void OnNewTab(object sender, RoutedEventArgs e)
+    {
+        try { await NewTabDialog.ShowAsync(XamlRoot, Vm); }
+        catch (Exception ex) { CrashLog.Write(ex); }
+    }
+
     private async void OnDeleteTab(object sender, RoutedEventArgs e)
     {
         try

@@ -122,6 +122,7 @@ public static class ConfigStore
                 Muted = section.GetBool(nameof(TabConfig.Muted), false),
                 Order = section.GetInt(nameof(TabConfig.Order), order++),
                 SelectedTags = ParseTags(section.GetString(nameof(TabConfig.SelectedTags), "")),
+                SelectedSites = ParseTags(section.GetString(nameof(TabConfig.SelectedSites), "")),
             });
         }
 
@@ -275,6 +276,9 @@ public static class ConfigStore
             // board that never uses tag filters should never gain an empty Tags= line on every tab.
             if (tab.SelectedTags.Count > 0)
                 section.Set(nameof(TabConfig.SelectedTags), FormatTags(tab.SelectedTags));
+
+            if (tab.SelectedSites.Count > 0)
+                section.Set(nameof(TabConfig.SelectedSites), FormatTags(tab.SelectedSites));
         }
     }
 
@@ -318,10 +322,11 @@ public static class ConfigStore
         value is { } v ? Math.Clamp(v, min, max) : null;
 
     /// <summary>
-    /// Splits a comma-separated <c>Tags=</c> value, used identically for a target's own tags and a
-    /// tab's selected-tags filter. Trimmed, empty entries dropped, and de-duplicated
-    /// case-insensitively but keeping the first spelling seen — a hand-edited file with
-    /// "Critical,critical" should not silently double-count in whatever reads the list back.
+    /// Splits a comma-separated list value — used for a target's own tags, a tab's selected-tags
+    /// filter, and a tab's selected-sites filter alike, since all three are the same shape. Trimmed,
+    /// empty entries dropped, and de-duplicated case-insensitively but keeping the first spelling
+    /// seen — a hand-edited file with "Critical,critical" should not silently double-count in
+    /// whatever reads the list back.
     /// <para>
     /// Public rather than private: the target-editing dialog in the App project parses the same
     /// comma-separated shape from its Tags text box and would otherwise have to duplicate this
