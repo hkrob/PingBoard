@@ -197,6 +197,12 @@ be a surprise way to stop monitoring something. `General` itself refuses both: i
 ungrouped target lands by definition, so renaming or deleting it would not make it go away, only
 leave an empty one to reappear the next time something needs the default.
 
+**Column choices (⚙ → Columns) are per tab.** A tab of ICMP hosts has no use for `Cert days`; a tab
+of public HTTPS sites wants it in view. The first time you hide or show a column on a given tab it
+starts keeping its own set, independent of every other tab; until then it shares the one set every
+board already had. Column *order*, zoom and auto-fit stay a single setting across the whole board —
+those are about screen space, not about what a particular group of hosts needs shown.
+
 Counters *and probe history* live in a sidecar (`board.state.ini`), so the file you edit stays free
 of churning numbers. Deleting the sidecar resets all statistics; there is a menu item for the same
 thing.
