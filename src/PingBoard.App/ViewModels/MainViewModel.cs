@@ -457,6 +457,11 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         if (!_tabs.Any(t => string.Equals(t.Name, _selectedTab, StringComparison.OrdinalIgnoreCase)))
             _selectedTab = _tabs[0].Name;
 
+        // Establishes the initial tab context for column choices even before the user clicks
+        // anything — SelectTab only fires on a later, different click, and the tab shown first
+        // needs its own choices loaded (or the shared starting point) from the moment it appears.
+        ColumnLayout.Instance.SwitchToTab(_selectedTab);
+
         ApplyTabStateToTargets();
         RebuildVisibleRows();
     }
@@ -531,6 +536,11 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         if (string.Equals(_selectedTab, tab.Name, StringComparison.OrdinalIgnoreCase)) return;
 
         _selectedTab = tab.Name;
+
+        // Loads this tab's own column choices, capturing the one being left behind first — see
+        // ColumnLayout.SwitchToTab.
+        ColumnLayout.Instance.SwitchToTab(tab.Name);
+
         RebuildVisibleRows();
     }
 
@@ -605,6 +615,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         tab.Name = trimmed;
 
         RepointTargets(oldName, trimmed);
+        ColumnLayout.Instance.RenameTab(oldName, trimmed);
 
         if (string.Equals(_selectedTab, oldName, StringComparison.OrdinalIgnoreCase))
             _selectedTab = trimmed;
@@ -631,6 +642,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         Tabs.Remove(tab);
 
         RepointTargets(tab.Name, "");
+        ColumnLayout.Instance.DeleteTab(tab.Name, TabConfig.DefaultName);
 
         if (string.Equals(_selectedTab, tab.Name, StringComparison.OrdinalIgnoreCase))
             _selectedTab = TabConfig.DefaultName;

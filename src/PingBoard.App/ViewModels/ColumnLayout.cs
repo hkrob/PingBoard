@@ -478,4 +478,139 @@ public sealed class ColumnLayout : INotifyPropertyChanged
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(TotalWidth)));
         }
     }
+
+    // ------------------------------------------------------------------ per-tab column choices
+    //
+    // Which columns are relevant differs by tab in a way order, zoom and width never do — a tab of
+    // ICMP hosts has no use for Cert days, a tab of public HTTPS sites wants it front and centre.
+    // Order/zoom/auto-fit stay a single shared setting on purpose: nobody wants the board to
+    // visibly reshuffle or rescale on every click of the tab strip, only for which columns show at
+    // all to change.
+    //
+    // A board with only one tab never touches any of this — SwitchToTab is simply never called,
+    // HiddenCsv keeps meaning exactly what it always did, and the per-tab dictionary stays empty.
+
+    private readonly Dictionary<string, string> _hiddenByTab = new(StringComparer.OrdinalIgnoreCase);
+    private string _activeTab = "";
+    private string _sharedDefaultHidden = "";
+
+    /// <summary>
+    /// Switches which tab's column choices are live: captures whatever the outgoing tab was
+    /// showing into its own slot, then loads the incoming tab's choices — its own, if it has ever
+    /// been customised, else the same starting point every never-customised tab shares.
+    /// <para>
+    /// Called once when a board's initial tab is established and again on every subsequent switch,
+    /// so a tab's choices are captured the moment you leave it rather than only at shutdown — which
+    /// matters because shutdown only ever sees whichever tab happens to be on screen at that
+    /// instant.
+    /// </para>
+    /// </summary>
+    public void SwitchToTab(string tabName)
+    {
+        if (string.Equals(_activeTab, tabName, StringComparison.OrdinalIgnoreCase)) return;
+
+        if (_activeTab.Length == 0)
+        {
+            // The very first tab context of this run. Whatever HiddenCsv holds right now is the
+            // legacy, boot-time value loaded from UiState before any tab existed, and becomes the
+            // shared starting point every not-yet-customised tab uses from here on — preserving
+            // exactly what a board without tabs, or a board upgrading into this feature, already
+            // had rather than resetting it to the shipped defaults.
+            _sharedDefaultHidden = HiddenCsv;
+        }
+        else
+        {
+            _hiddenByTab[_activeTab] = HiddenCsv;
+        }
+
+        _activeTab = tabName;
+        HiddenCsv = _hiddenByTab.TryGetValue(tabName, out var saved) ? saved : _sharedDefaultHidden;
+    }
+
+    /// <summary>
+    /// Carries a tab's column choices across a rename, so giving a tab a new name does not reset
+    /// what it shows.
+    /// <para>
+    /// Deliberately not implemented as leave-then-enter through <see cref="SwitchToTab"/>: if the
+    /// renamed tab is the active one, that would capture its live choices under the name being
+    /// abandoned and then load — most likely nothing — for the new one, discarding exactly the
+    /// state a rename is supposed to preserve. Relabelling <see cref="_activeTab"/> in place keeps
+    /// the live <see cref="_hidden"/> set exactly as it was; only its name changes.
+    /// </para>
+    /// </summary>
+    public void RenameTab(string oldName, string newName)
+    {
+        if (string.Equals(_activeTab, oldName, StringComparison.OrdinalIgnoreCase))
+        {
+            _activeTab = newName;
+            return;
+        }
+
+        if (_hiddenByTab.Remove(oldName, out var hidden)) _hiddenByTab[newName] = hidden;
+    }
+
+    /// <summary>
+    /// Forgets a deleted tab's column choices and, if it was the active one, loads
+    /// <paramref name="fallbackTabName"/> directly.
+    /// <para>
+    /// Not routed through <see cref="SwitchToTab"/> for the same reason as <see cref="RenameTab"/>:
+    /// that would capture the doomed tab's live choices right back into the dictionary entry this
+    /// method exists to remove.
+    /// </para>
+    /// </summary>
+    public void DeleteTab(string deletedName, string fallbackTabName)
+    {
+        _hiddenByTab.Remove(deletedName);
+
+        if (!string.Equals(_activeTab, deletedName, StringComparison.OrdinalIgnoreCase)) return;
+
+        _activeTab = fallbackTabName;
+        HiddenCsv = _hiddenByTab.TryGetValue(fallbackTabName, out var saved) ? saved : _sharedDefaultHidden;
+    }
+
+    /// <summary>
+    /// Everything needed to persist per-tab column choices: the active tab's live state is folded
+    /// in first, since <see cref="SwitchToTab"/> only ever captures the tab being <em>left</em> —
+    /// without this, whichever tab is on screen at shutdown would never be saved at all.
+    /// </summary>
+    public (string SharedDefault, IReadOnlyDictionary<string, string> ByTab) SnapshotForSave()
+    {
+        if (_activeTab.Length > 0)
+        {
+            // Only recorded if it actually differs from the shared default — merely having looked
+            // at a tab is not the same as having customised it, and every tab that ever happened to
+            // be on screen at shutdown getting its own permanent section would slowly clutter the
+            // file with entries that change nothing on load, since the fallback is already this
+            // same default. Compared as sets, not as strings: HashSet enumeration order is an
+            // implementation detail, not a contract, and two identical choices must never be
+            // treated as different just because they were built up in a different order.
+            var defaultSet = new HashSet<string>(
+                _sharedDefaultHidden.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
+                StringComparer.Ordinal);
+
+            if (!_hidden.SetEquals(defaultSet)) _hiddenByTab[_activeTab] = HiddenCsv;
+            else _hiddenByTab.Remove(_activeTab);
+        }
+
+        // A board that never used tabs has no shared default distinct from HiddenCsv itself — this
+        // is what keeps that case byte-for-byte the same as before per-tab choices existed.
+        var shared = _activeTab.Length > 0 ? _sharedDefaultHidden : HiddenCsv;
+        return (shared, _hiddenByTab);
+    }
+
+    /// <summary>
+    /// Restores column state at boot: <paramref name="sharedDefault"/> exactly as <see cref="HiddenCsv"/>
+    /// always worked, plus whatever per-tab choices were saved, ready for the first
+    /// <see cref="SwitchToTab"/> call once the board's tabs are known.
+    /// </summary>
+    public void RestoreHidden(string sharedDefault, IReadOnlyDictionary<string, string> byTab)
+    {
+        HiddenCsv = sharedDefault;
+
+        _hiddenByTab.Clear();
+        foreach (var (tab, csv) in byTab) _hiddenByTab[tab] = csv;
+
+        _activeTab = "";
+        _sharedDefaultHidden = "";
+    }
 }

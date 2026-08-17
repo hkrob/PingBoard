@@ -297,7 +297,7 @@ public sealed partial class MainWindow : Window
 
     private void RestorePlacement()
     {
-        ColumnLayout.Instance.HiddenCsv = _uiState.HiddenColumns;
+        ColumnLayout.Instance.RestoreHidden(_uiState.HiddenColumns, _uiState.ColumnsByTab);
 
         if (_uiState.WindowWidth > 200 && _uiState.WindowHeight > 150)
         {
@@ -324,7 +324,11 @@ public sealed partial class MainWindow : Window
         _uiState.WindowY = position.Y;
         _uiState.WindowWidth = size.Width;
         _uiState.WindowHeight = size.Height;
-        _uiState.HiddenColumns = ColumnLayout.Instance.HiddenCsv;
+        var (sharedDefault, byTab) = ColumnLayout.Instance.SnapshotForSave();
+        _uiState.HiddenColumns = sharedDefault;
+        _uiState.ColumnsByTab.Clear();
+        foreach (var (tab, hidden) in byTab) _uiState.ColumnsByTab[tab] = hidden;
+
         _uiState.LastConfigPath = Vm.ConfigPath;
         _uiState.Save();
     }

@@ -25,6 +25,7 @@ public sealed partial class BoardView : UserControl
         InitializeComponent();
 
         BuildColumnsMenu();
+        ColumnsFlyout.Opening += (_, _) => RefreshColumnsMenu();
         UpdateSortIndicator();
 
         // Read from the registry rather than from our own saved state: the entry can be removed
@@ -688,6 +689,23 @@ public sealed partial class BoardView : UserControl
 
             ColumnsFlyout.Items.Add(item);
         }
+    }
+
+    /// <summary>
+    /// Resyncs every checkbox to what is actually visible right now, immediately before the menu
+    /// is shown.
+    /// <para>
+    /// The items themselves are built once at construction and never recreated — column choices
+    /// are now per tab, so which columns are checked has to track whichever tab is on screen, and
+    /// rebuilding the whole menu on every switch just to flip some checkmarks would be wasteful for
+    /// what is otherwise identical, static content.
+    /// </para>
+    /// </summary>
+    private void RefreshColumnsMenu()
+    {
+        foreach (var entry in ColumnsFlyout.Items)
+            if (entry is ToggleMenuFlyoutItem { Tag: string id } toggle)
+                toggle.IsChecked = ColumnLayout.Instance.IsVisible(id);
     }
 
     // ---------------------------------------------------------------- keyboard

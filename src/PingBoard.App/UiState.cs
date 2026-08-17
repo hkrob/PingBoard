@@ -13,12 +13,23 @@ namespace PingBoard.App;
 public sealed class UiState
 {
     private const string Section = "Ui";
+    private const string ColumnsPrefix = "Columns:";
 
     public int WindowX { get; set; }
     public int WindowY { get; set; }
     public int WindowWidth { get; set; }
     public int WindowHeight { get; set; }
     public string HiddenColumns { get; set; } = string.Join(',', ColumnLayoutDefaults);
+
+    /// <summary>
+    /// Per-tab column overrides, keyed by tab name — only present once a tab's columns have
+    /// actually been customised independently of <see cref="HiddenColumns"/>. Own sections
+    /// (<c>[Columns:name]</c>) rather than one more flat string, because tab names are open-ended
+    /// and user-chosen — including a rename, since PingBoard added one — and a name is not
+    /// something this file should have to escape out of a delimited value to store safely.
+    /// </summary>
+    public Dictionary<string, string> ColumnsByTab { get; } = new(StringComparer.OrdinalIgnoreCase);
+
     public string? LastConfigPath { get; set; }
 
     /// <summary>
@@ -66,7 +77,8 @@ public sealed class UiState
         {
             if (!File.Exists(AppPaths.UiStateFile)) return state;
 
-            var section = IniFile.Load(AppPaths.UiStateFile).Find(Section);
+            var ini = IniFile.Load(AppPaths.UiStateFile);
+            var section = ini.Find(Section);
             if (section is null) return state;
 
             state.WindowX = section.GetInt(nameof(WindowX), 0);
@@ -84,6 +96,13 @@ public sealed class UiState
 
             var last = section.GetString(nameof(LastConfigPath), "");
             state.LastConfigPath = last.Length > 0 ? last : null;
+
+            foreach (var tabSection in ini.WithPrefix(ColumnsPrefix))
+            {
+                var tabName = tabSection.Name[ColumnsPrefix.Length..];
+                var hidden = tabSection.GetString("Hidden", "");
+                if (tabName.Length > 0 && hidden.Length > 0) state.ColumnsByTab[tabName] = hidden;
+            }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -114,6 +133,9 @@ public sealed class UiState
             section.Set(nameof(CheckUpdatesOnStartup), CheckUpdatesOnStartup);
             if (LastUpdateCheck.Length > 0) section.Set(nameof(LastUpdateCheck), LastUpdateCheck);
             if (LastConfigPath is { Length: > 0 } path) section.Set(nameof(LastConfigPath), path);
+
+            foreach (var (tabName, hidden) in ColumnsByTab)
+                ini.GetOrAdd(ColumnsPrefix + tabName).Set("Hidden", hidden);
 
             ini.SaveAtomic(AppPaths.UiStateFile);
         }
