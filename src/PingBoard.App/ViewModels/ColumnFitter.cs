@@ -123,6 +123,8 @@ public sealed class ColumnFitter
         "Avail30d" => row.Avail30d,
         "CertExpiring" => row.CertExpiring,
         "CertDays" => row.CertDays,
+        "SiteName" => row.SiteName,
+        "SiteAbbreviation" => row.SiteAbbreviation,
         _ => "",
     };
 }

@@ -82,6 +82,17 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     private string _selectedTab = TabConfig.DefaultName;
 
     /// <summary>
+    /// The site registry: every physical location any target currently names, plus its
+    /// abbreviation. No UI-facing wrapper the way tabs have <see cref="TabItem"/> — there is no
+    /// visual strip for sites to appear in, only two board columns reading straight from a
+    /// target's own <see cref="TargetConfig.Site"/> plus a lookup here for the abbreviation.
+    /// </summary>
+    private List<SiteConfig> _sites = [];
+
+    /// <summary>Existing site names, for the target dialog's picker.</summary>
+    public IReadOnlyList<SiteConfig> Sites => _sites;
+
+    /// <summary>
     /// Free-text filter over name, IP and hostname.
     /// <para>
     /// A filter is a view over the board, never a change to it: filtered-out targets keep being
@@ -238,6 +249,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         _autosaveTimer.Start();
 
         BuildTabs(config.Tabs);
+        _sites = [.. config.Sites.Select(s => s.Clone())];
 
         ApplySort();
         RefreshRows();
@@ -287,7 +299,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
     private void RefreshRows()
     {
-        foreach (var row in Rows) row.Refresh(_settings.CertWarnDays, row.Target.TimeoutMsFrom(_settings));
+        foreach (var row in Rows) row.Refresh(_settings.CertWarnDays, row.Target.TimeoutMsFrom(_settings), _sites);
 
         var up = 0;
         var down = 0;
@@ -671,7 +683,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             var updated = row.Target.Config.Clone();
             updated.Tab = toTab;
             row.Target.UpdateConfig(updated);
-            row.Refresh(_settings.CertWarnDays, row.Target.TimeoutMsFrom(_settings));
+            row.Refresh(_settings.CertWarnDays, row.Target.TimeoutMsFrom(_settings), _sites);
         }
     }
 
@@ -843,6 +855,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         // A target added into a tab that does not exist yet brings that tab into being, so the new
         // host is reachable rather than orphaned behind a tab nobody can select.
         EnsureTab(config.Tab);
+        UpsertSite(config.Site, null);
 
         var target = new PingTarget(config, _settings);
         _scheduler.AddTarget(target);
@@ -872,6 +885,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
                 continue;
 
             EnsureTab(config.Tab);
+            UpsertSite(config.Site, null);
 
             var target = new PingTarget(config, _settings);
             _scheduler.AddTarget(target);
@@ -899,12 +913,49 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         Tabs.Add(new TabItem(normalised));
     }
 
+    /// <summary>
+    /// Registers a site if the board does not have one already, and updates its abbreviation when
+    /// the caller supplies one.
+    /// <para>
+    /// Unlike <see cref="EnsureTab"/>, a blank name is a no-op rather than falling back to a default
+    /// — "no site" is a normal, common state with nothing to ensure. And unlike Tab, this can also
+    /// <em>update</em> an existing entry: <paramref name="abbreviation"/> is null from every caller
+    /// that only knows a target's site by name (mirroring EnsureTab's bare registration, so a site
+    /// always has a registry entry the moment anything names it, whichever path added the target)
+    /// and non-null only from the target dialog, which is the one place a user actually sets or
+    /// changes what a site abbreviates to. Whatever the dialog sends replaces the stored value
+    /// outright — no hidden "leave it alone if blank" — matching how every other field here works:
+    /// what you see in the box when you save is what gets stored.
+    /// </para>
+    /// </summary>
+    private void UpsertSite(string? name, string? abbreviation)
+    {
+        var trimmedName = name?.Trim() ?? "";
+        if (trimmedName.Length == 0) return;
+
+        var existing = _sites.Find(s => string.Equals(s.Name, trimmedName, StringComparison.OrdinalIgnoreCase));
+        if (existing is not null)
+        {
+            if (abbreviation is not null) existing.Abbreviation = abbreviation.Trim();
+            return;
+        }
+
+        _sites.Add(new SiteConfig { Name = trimmedName, Abbreviation = abbreviation?.Trim() ?? "" });
+    }
+
+    /// <summary>
+    /// Sets a site's abbreviation directly, for the target dialog to call alongside saving a target
+    /// — see <see cref="UpsertSite"/> for the exact contract.
+    /// </summary>
+    public void SetSiteAbbreviation(string? siteName, string? abbreviation) => UpsertSite(siteName, abbreviation);
+
     public void UpdateTarget(TargetRow row, TargetConfig config)
     {
         EnsureTab(config.Tab);
+        UpsertSite(config.Site, null);
 
         row.Target.UpdateConfig(config);
-        row.Refresh(_settings.CertWarnDays, row.Target.TimeoutMsFrom(_settings));
+        row.Refresh(_settings.CertWarnDays, row.Target.TimeoutMsFrom(_settings), _sites);
 
         ApplyTabStateToTargets();
         SaveConfig();
@@ -981,7 +1032,8 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
         try
         {
-            ConfigStore.Save(ConfigPath, _settings, Rows.Select(r => r.Target.Config), _alertSettings, _tabs);
+            ConfigStore.Save(
+                ConfigPath, _settings, Rows.Select(r => r.Target.Config), _alertSettings, _tabs, _sites);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {

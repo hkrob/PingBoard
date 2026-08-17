@@ -73,6 +73,16 @@ public sealed partial class TargetRow : ObservableObject
     /// <summary>Whole days until expiry, negative once past it.</summary>
     [ObservableProperty] public partial string CertDays { get; private set; } = "—";
 
+    /// <summary>The physical site this target belongs to, or "—" for none. See <see cref="SiteConfig"/>.</summary>
+    [ObservableProperty] public partial string SiteName { get; private set; } = "—";
+
+    /// <summary>
+    /// The site's short form, looked up from the registry by name — never typed on the target
+    /// itself, so every target at a site reads identically. "—" both when there is no site and when
+    /// the site has never had an abbreviation set for it.
+    /// </summary>
+    [ObservableProperty] public partial string SiteAbbreviation { get; private set; } = "—";
+
     [ObservableProperty] public partial string ThemeKey { get; private set; } = "StatusIdleBrush";
 
     /// <summary>
@@ -207,7 +217,14 @@ public sealed partial class TargetRow : ObservableObject
     /// the actual value within the next tick, so a row is never left showing a stale placeholder.
     /// </para>
     /// </param>
-    public void Refresh(int certWarnDays = 14, int timeoutMs = 2000)
+    /// <param name="sites">
+    /// The site registry, for the abbreviation lookup — a target only ever stores the site's name
+    /// (<see cref="TargetConfig.Site"/>), never its abbreviation, so every target at a site reads
+    /// identically rather than drifting. Null on the constructor's placeholder call, same as
+    /// <paramref name="certWarnDays"/> and <paramref name="timeoutMs"/>.
+    /// </param>
+    public void Refresh(
+        int certWarnDays = 14, int timeoutMs = 2000, IReadOnlyList<SiteConfig>? sites = null)
     {
         var s = Target.Snapshot();
         Snapshot = s;
@@ -226,6 +243,21 @@ public sealed partial class TargetRow : ObservableObject
             // the certificate is fine, so neither may print "no".
             CertExpiring = "—";
             CertDays = "—";
+        }
+
+        var site = Target.Config.Site;
+        if (site.Length > 0)
+        {
+            SiteName = site;
+
+            var match = sites?.FirstOrDefault(
+                x => string.Equals(x.Name, site, StringComparison.OrdinalIgnoreCase));
+            SiteAbbreviation = match is { Abbreviation.Length: > 0 } ? match.Abbreviation : "—";
+        }
+        else
+        {
+            SiteName = "—";
+            SiteAbbreviation = "—";
         }
 
         StatusLabel = s.Status.Label();

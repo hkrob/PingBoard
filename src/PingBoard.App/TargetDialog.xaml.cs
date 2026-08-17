@@ -25,6 +25,9 @@ public sealed partial class TargetDialog : ContentDialog
         // than only by hand-editing the ini.
         foreach (var tab in vm.Tabs) TabBox.Items.Add(tab.Name);
 
+        // Same for sites, plus the abbreviation registry SelectionChanged reads from.
+        foreach (var site in vm.Sites) SiteBox.Items.Add(site.Name);
+
         if (editing is not null)
         {
             var config = editing.Target.Config;
@@ -37,6 +40,11 @@ public sealed partial class TargetDialog : ContentDialog
             SetOptional(ExpectStatusBox, config.ExpectStatus);
             TabBox.Text = TabConfig.Normalise(config.Tab);
             MaintenanceBox.Text = config.Maintenance;
+
+            SiteBox.Text = config.Site;
+            SiteAbbreviationBox.Text = vm.Sites
+                .FirstOrDefault(s => string.Equals(s.Name, config.Site, StringComparison.OrdinalIgnoreCase))
+                ?.Abbreviation ?? "";
 
             SetOptional(IntervalBox, config.IntervalMs);
             SetOptional(TimeoutBox, config.TimeoutMs);
@@ -103,6 +111,19 @@ public sealed partial class TargetDialog : ContentDialog
     }
 
     private void OnProbeChanged(object sender, SelectionChangedEventArgs e) => UpdateProbeUi();
+
+    /// <summary>
+    /// Fills the abbreviation in from the registry when an existing site is picked from the
+    /// dropdown — never on free-typing or on merely losing focus, both of which would otherwise
+    /// risk silently overwriting an abbreviation the user just finished editing by hand.
+    /// </summary>
+    private void OnSiteSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (SiteBox.SelectedItem is not string name) return;
+
+        var match = _vm.Sites.FirstOrDefault(s => string.Equals(s.Name, name, StringComparison.OrdinalIgnoreCase));
+        if (match is not null) SiteAbbreviationBox.Text = match.Abbreviation;
+    }
 
     private static int IndexFor(ProbeKind kind) => kind switch
     {
@@ -208,6 +229,14 @@ public sealed partial class TargetDialog : ContentDialog
             return;
         }
 
+        var site = SiteBox.Text.Trim();
+
+        // Whatever is in the box when Save is clicked is what gets stored for the site, matching
+        // how every other field here works — no hidden "leave it alone if blank" behaviour. The
+        // dropdown's SelectionChanged is what protects against an accidental clobber, by only ever
+        // filling this box from the registry on a deliberate pick, never merely on losing focus.
+        _vm.SetSiteAbbreviation(site, SiteAbbreviationBox.Text.Trim());
+
         Result = new TargetConfig
         {
             Name = name,
@@ -216,6 +245,7 @@ public sealed partial class TargetDialog : ContentDialog
             Port = isIcmp ? 443 : (int)PortBox.Value,
             Enabled = EnabledSwitch.IsOn,
             Tab = TabConfig.Normalise(TabBox.Text),
+            Site = site,
             Maintenance = maintenance,
             Path = isHttp ? path : "/",
             ExpectStatus = isHttp ? ReadOptional(ExpectStatusBox) : null,

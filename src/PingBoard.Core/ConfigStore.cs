@@ -7,14 +7,15 @@ public sealed record BoardConfig(
     Settings Settings,
     IReadOnlyList<TargetConfig> Targets,
     AlertSettings Alerts,
-    IReadOnlyList<TabConfig> Tabs)
+    IReadOnlyList<TabConfig> Tabs,
+    IReadOnlyList<SiteConfig> Sites)
 {
     /// <summary>Convenience for callers that predate alerting and have no alert settings to supply.</summary>
     public BoardConfig(Settings settings, IReadOnlyList<TargetConfig> targets)
-        : this(settings, targets, new AlertSettings(), []) { }
+        : this(settings, targets, new AlertSettings(), [], []) { }
 
     public BoardConfig(Settings settings, IReadOnlyList<TargetConfig> targets, AlertSettings alerts)
-        : this(settings, targets, alerts, []) { }
+        : this(settings, targets, alerts, [], []) { }
 }
 
 /// <summary>
@@ -31,6 +32,7 @@ public static class ConfigStore
     public const string AlertsSection = "Alerts";
     public const string TargetPrefix = "Target:";
     public const string TabPrefix = "Tab:";
+    public const string SitePrefix = "Site:";
 
     private const string HeaderComment =
         "PingBoard configuration.\n" +
@@ -122,6 +124,24 @@ public static class ConfigStore
             });
         }
 
+        // Read the same way tabs are, and for the same reason: a target naming a site that already
+        // has its own section should pick up that section's abbreviation rather than a blank one
+        // invented here.
+        var sites = new List<SiteConfig>();
+        var sitesSeen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var section in ini.WithPrefix(SitePrefix))
+        {
+            var name = section.Name[SitePrefix.Length..].Trim();
+            if (name.Length == 0 || !sitesSeen.Add(name)) continue;
+
+            sites.Add(new SiteConfig
+            {
+                Name = name,
+                Abbreviation = section.GetString(nameof(SiteConfig.Abbreviation), ""),
+            });
+        }
+
         var targets = new List<TargetConfig>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -163,6 +183,7 @@ public static class ConfigStore
                 ExpectStatus = ClampOrNull(section.GetIntOrNull(nameof(TargetConfig.ExpectStatus)), 100, 599),
                 Enabled = section.GetBool(nameof(TargetConfig.Enabled), true),
                 Tab = section.GetString(nameof(TargetConfig.Tab), "").Trim(),
+                Site = section.GetString(nameof(TargetConfig.Site), "").Trim(),
 
                 // Every override is clamped to the same range Settings.Validate applies globally.
                 // An override that skipped validation would be the one value in the file that
@@ -198,7 +219,16 @@ public static class ConfigStore
 
         tabs.Sort((a, b) => a.Order.CompareTo(b.Order));
 
-        return new BoardConfig(settings, targets, alerts, tabs);
+        // Same reconstruction as tabs, but only for a target that actually names one: unlike Tab,
+        // blank Site means "no site" rather than a default group, and there is nothing to invent a
+        // record for.
+        foreach (var target in targets)
+        {
+            var name = target.Site.Trim();
+            if (name.Length > 0 && sitesSeen.Add(name)) sites.Add(new SiteConfig { Name = name });
+        }
+
+        return new BoardConfig(settings, targets, alerts, tabs, sites);
     }
 
     /// <summary>
@@ -238,6 +268,38 @@ public static class ConfigStore
             section.Set(nameof(TabConfig.Enabled), tab.Enabled);
             section.Set(nameof(TabConfig.Muted), tab.Muted);
             section.Set(nameof(TabConfig.Order), order++);
+        }
+    }
+
+    /// <summary>
+    /// Writes the <c>[Site:...]</c> sections, or copies the existing ones across when the caller
+    /// passed none — same null-preserves-the-file contract as <see cref="WriteTabs"/>.
+    /// <para>
+    /// Every known site gets a section unconditionally, on the same reasoning <see cref="WriteTabs"/>
+    /// settled on: a site with no section is reconstructed on load purely from target membership,
+    /// which knows the name but never the abbreviation — skipping "default-looking" sites here would
+    /// silently lose the one piece of state a site actually exists to carry.
+    /// </para>
+    /// </summary>
+    private static void WriteSites(IniFile ini, string path, IEnumerable<SiteConfig>? sites)
+    {
+        if (sites is null)
+        {
+            if (!File.Exists(path) && !File.Exists(path + ".bak")) return;
+
+            foreach (var existing in IniFile.LoadResilient(path).WithPrefix(SitePrefix))
+            {
+                var copy = ini.GetOrAdd(existing.Name);
+                foreach (var (key, value) in existing.Entries) copy.Set(key, value);
+            }
+
+            return;
+        }
+
+        foreach (var site in sites)
+        {
+            var section = ini.GetOrAdd(SitePrefix + site.Name);
+            section.Set(nameof(SiteConfig.Abbreviation), site.Abbreviation);
         }
     }
 
@@ -302,12 +364,14 @@ public static class ConfigStore
     /// <paramref name="alerts"/> does: autosave paths that know nothing about tabs must not delete
     /// the user's grouping.
     /// </param>
+    /// <param name="sites">Null leaves any <c>[Site:...]</c> sections on disk alone, for the same reason.</param>
     public static void Save(
         string path,
         Settings settings,
         IEnumerable<TargetConfig> targets,
         AlertSettings? alerts = null,
-        IEnumerable<TabConfig>? tabs = null)
+        IEnumerable<TabConfig>? tabs = null,
+        IEnumerable<SiteConfig>? sites = null)
     {
         var ini = new IniFile();
 
@@ -340,6 +404,7 @@ public static class ConfigStore
 
         WriteAlerts(ini, path, alerts);
         WriteTabs(ini, path, tabs);
+        WriteSites(ini, path, sites);
 
         foreach (var t in targets)
         {
@@ -366,6 +431,7 @@ public static class ConfigStore
             // Written only when the target actually names a tab, so a board that never used them
             // round-trips byte for byte.
             if (t.Tab is { Length: > 0 }) section.Set(nameof(TargetConfig.Tab), t.Tab);
+            if (t.Site is { Length: > 0 }) section.Set(nameof(TargetConfig.Site), t.Site);
             if (t.Maintenance is { Length: > 0 }) section.Set(nameof(TargetConfig.Maintenance), t.Maintenance);
 
             section.SetOptional(nameof(TargetConfig.IntervalMs), t.IntervalMs);

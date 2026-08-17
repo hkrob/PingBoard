@@ -45,6 +45,7 @@ internal static class SelfTest
             WebhookDeliversATransition();
             TraceRouteFindsThePath();
             TabsGroupWithoutGating(scratch);
+            SitesAreIndependentOfTabs(scratch);
             UpdateVersionComparison();
             HttpProbeJudgesTheStatusCode();
             RecentStatsWindow();
@@ -1336,6 +1337,72 @@ internal static class SelfTest
     /// Tab grouping: config round-trip, backward compatibility, and the rule that matters — a tab
     /// is a view, not a scheduler.
     /// </summary>
+    /// <summary>
+    /// Site is a separate axis from Tab by design — a physical location rather than a functional
+    /// grouping — and the two must never entangle: a target's tab is untouched by which site it
+    /// names, and vice versa. The abbreviation is the whole point of the registry existing at all:
+    /// two targets naming the same site must read identically, never drift into "Conn" on one and
+    /// "Connaught" on the other depending on who typed what.
+    /// </summary>
+    private static void SitesAreIndependentOfTabs(string dir)
+    {
+        var path = Path.Combine(dir, "sites.ini");
+
+        var targets = new List<TargetConfig>
+        {
+            new() { Name = "gw", Address = "10.1.10.1", Tab = "LAN", Site = "Connaught" },
+            new() { Name = "wan", Address = "1.1.1.1", Tab = "WAN", Site = "Connaught" },
+            new() { Name = "stray", Address = "8.8.8.8", Tab = "LAN" },      // no site at all
+        };
+
+        var sites = new List<SiteConfig> { new() { Name = "Connaught", Abbreviation = "Conn" } };
+
+        ConfigStore.Save(path, new Settings(), targets, null, null, sites);
+        var loaded = ConfigStore.Load(path);
+
+        Check("sites: membership round-trips",
+            loaded.Targets.First(t => t.Name == "gw").Site == "Connaught");
+        Check("sites: abbreviation round-trips",
+            loaded.Sites.First(s => s.Name == "Connaught").Abbreviation == "Conn");
+        Check("sites: a site-free target has no Site value",
+            loaded.Targets.First(t => t.Name == "stray").Site.Length == 0);
+        Check("sites: a site-free target is not folded into any default",
+            !loaded.Sites.Any(s => s.Name.Length == 0));
+
+        // Independence from Tab, in both directions: two targets sharing a site sit in different
+        // tabs, and two targets sharing a tab sit in different sites (or none).
+        Check("sites: same site, different tabs — both preserved",
+            loaded.Targets.First(t => t.Name == "gw").Tab == "LAN"
+            && loaded.Targets.First(t => t.Name == "wan").Tab == "WAN");
+        Check("sites: same tab, different sites — both preserved",
+            loaded.Targets.First(t => t.Name == "stray").Tab == "LAN"
+            && loaded.Targets.First(t => t.Name == "stray").Site.Length == 0);
+
+        // Named only by membership: no [Site:...] section of its own, so the abbreviation cannot be
+        // known — it must still exist, blank, rather than leaving the target with nowhere to point.
+        var implied = Path.Combine(dir, "implied-site.ini");
+        ConfigStore.Save(implied, new Settings(),
+            [new TargetConfig { Name = "a", Address = "1.1.1.1", Site = "Northcliffe" }]);
+
+        var impliedSite = ConfigStore.Load(implied).Sites.FirstOrDefault(s => s.Name == "Northcliffe");
+        Check("sites: a site with no section is reconstructed from membership",
+            impliedSite.Name == "Northcliffe" && impliedSite.Abbreviation.Length == 0);
+
+        // Autosave paths pass no sites; they must not delete the registry, same contract as tabs.
+        ConfigStore.Save(path, new Settings(), targets);
+        Check("sites: an autosave without sites preserves the registry",
+            ConfigStore.Load(path).Sites.First(s => s.Name == "Connaught").Abbreviation == "Conn");
+
+        // A board that never used sites must round-trip without gaining a Site key or section.
+        var legacy = Path.Combine(dir, "legacy-site.ini");
+        ConfigStore.Save(legacy, new Settings(), [new TargetConfig { Name = "old", Address = "1.2.3.4" }]);
+        var legacyText = File.ReadAllText(legacy);
+        Check("sites: a site-free config gains no Site key",
+            !legacyText.Contains("Site=", StringComparison.OrdinalIgnoreCase));
+        Check("sites: a site-free config gains no [Site:] section",
+            !legacyText.Contains("[Site:", StringComparison.OrdinalIgnoreCase));
+    }
+
     private static void TabsGroupWithoutGating(string dir)
     {
         var path = Path.Combine(dir, "tabs.ini");

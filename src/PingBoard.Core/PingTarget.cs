@@ -21,6 +21,14 @@ public sealed class TargetConfig
     /// </summary>
     public string Tab { get; set; } = "";
 
+    /// <summary>
+    /// Physical site this target belongs to, or empty for none — see <see cref="SiteConfig"/> for
+    /// why this is a separate axis from <see cref="Tab"/> rather than a kind of it. Unlike Tab,
+    /// empty here means "not tied to a site" rather than falling back to a default group; most
+    /// targets have no site worth naming, and there is nothing for them to fall back to.
+    /// </summary>
+    public string Site { get; set; } = "";
+
     /// <summary>Request path for HTTP probes. Ignored by ICMP and TCP.</summary>
     public string Path { get; set; } = "/";
 

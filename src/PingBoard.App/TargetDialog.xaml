@@ -70,6 +70,24 @@
                       HorizontalAlignment="Left"
                       PlaceholderText="General" />
 
+            <!-- A physical location, kept deliberately separate from Tab — see SiteConfig. Picking
+                 an existing name fills the abbreviation in from the registry; typing a new one
+                 leaves it blank for this box to define. -->
+            <StackPanel Orientation="Horizontal" Spacing="12">
+                <ComboBox x:Name="SiteBox"
+                          Header="Site (optional)"
+                          IsEditable="True"
+                          Width="200"
+                          PlaceholderText="none"
+                          SelectionChanged="OnSiteSelectionChanged" />
+                <TextBox x:Name="SiteAbbreviationBox"
+                         Header="Abbreviation"
+                         Width="140"
+                         PlaceholderText="e.g. Conn" />
+            </StackPanel>
+            <TextBlock FontSize="12" Opacity="0.65" TextWrapping="Wrap"
+                       Text="A site is a place, not a purpose — a tab of &quot;Public DNS&quot; can span several sites, and a site can span several tabs. The abbreviation is shared by every target at the site: changing it here changes what every one of them shows." />
+
             <TextBox x:Name="MaintenanceBox"
                      Header="Maintenance windows (optional)"
                      PlaceholderText="Sat 22:00-02:00, Sun 03:00-05:00" />
