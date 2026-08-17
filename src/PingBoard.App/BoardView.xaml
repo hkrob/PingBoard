@@ -40,7 +40,7 @@
                             Background="Transparent"
                             Padding="10,4"
                             Opacity="{x:Bind TabOpacity, Mode=OneWay}"
-                            AutomationProperties.Name="{x:Bind Name}">
+                            AutomationProperties.Name="{x:Bind Name, Mode=OneWay}">
                         <StackPanel Orientation="Horizontal" Spacing="6">
                             <TextBlock Text="&#xE711;"
                                        FontFamily="Segoe Fluent Icons"
@@ -65,6 +65,12 @@
                                 <MenuFlyoutSeparator />
                                 <MenuFlyoutItem Text="Enable this tab" Click="OnEnableTab" />
                                 <MenuFlyoutItem Text="Disable this tab (stops probing)" Click="OnDisableTab" />
+                                <MenuFlyoutSeparator />
+                                <!-- Both offered even on the General tab, which refuses both with an
+                                     explanation on click — simpler and more honest than hiding the
+                                     option and leaving the user to guess why it is not there. -->
+                                <MenuFlyoutItem Text="Rename tab…" Click="OnRenameTab" />
+                                <MenuFlyoutItem Text="Delete tab…" Click="OnDeleteTab" />
                             </MenuFlyout>
                         </Button.ContextFlyout>
                     </Button>

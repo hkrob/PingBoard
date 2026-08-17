@@ -1,5 +1,6 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using Microsoft.UI.Xaml;
+using PingBoard.Core;
 
 namespace PingBoard.App.ViewModels;
 
@@ -16,7 +17,20 @@ public sealed partial class TabItem : ObservableObject
 {
     public TabItem(string name) => Name = name;
 
-    public string Name { get; }
+    /// <summary>
+    /// Settable rather than init-only, so <see cref="MainViewModel.RenameTab"/> can rename this
+    /// instance in place — the tab keeps its position in the strip and its live tally instead of
+    /// being torn down and rebuilt.
+    /// </summary>
+    [ObservableProperty] public partial string Name { get; set; } = "";
+
+    /// <summary>
+    /// True for the one tab named "General" — the fallback every ungrouped target resolves to via
+    /// <see cref="TabConfig.Normalise"/>. Never toggles for a given instance: renaming or deleting
+    /// this specific tab is refused (see <see cref="MainViewModel.RenameTab"/>), so unlike
+    /// <see cref="Name"/> this needs no change notification of its own.
+    /// </summary>
+    public bool IsDefaultTab => string.Equals(Name, TabConfig.DefaultName, StringComparison.OrdinalIgnoreCase);
 
     [ObservableProperty] public partial bool IsSelected { get; set; }
 

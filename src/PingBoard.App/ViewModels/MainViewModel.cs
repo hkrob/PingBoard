@@ -565,6 +565,104 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         SaveConfig();
     }
 
+    /// <summary>
+    /// Renames a tab and repoints every target that belonged to it, or returns why it could not be
+    /// done. Null means it succeeded.
+    /// <para>
+    /// A tab is identified to callers by the <see cref="TabItem"/> they already have rather than by
+    /// name, so the rename dialog cannot race a name that changed under it between opening and
+    /// confirming.
+    /// </para>
+    /// </summary>
+    public string? RenameTab(TabItem tab, string newName)
+    {
+        var trimmed = newName.Trim();
+        if (trimmed.Length == 0) return "Enter a name.";
+
+        // TabConfig.Normalise hard-codes "General" as where an ungrouped target lands. Renaming
+        // this specific tab away would not make it disappear — the next target left with a blank
+        // Tab value would simply resurrect an empty one under the old name, while the hosts that
+        // used to be there now sit under a name nothing defaults to. Refusing is simpler and more
+        // honest than a rename that quietly does not do what it says.
+        if (tab.IsDefaultTab)
+            return "The General tab can't be renamed — it's where ungrouped targets are kept.";
+
+        // Typing the same name back (or only changing its case, which nothing else here treats as
+        // meaningfully different) is not an error — it is closing the dialog having decided not to
+        // change anything.
+        if (string.Equals(trimmed, tab.Name, StringComparison.Ordinal)) return null;
+
+        var collision = _tabs.Any(t =>
+            !string.Equals(t.Name, tab.Name, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(t.Name, trimmed, StringComparison.OrdinalIgnoreCase));
+
+        if (collision) return $"A tab named “{trimmed}” already exists.";
+
+        var config = _tabs.Find(t => string.Equals(t.Name, tab.Name, StringComparison.OrdinalIgnoreCase));
+        if (config is not null) config.Name = trimmed;
+
+        var oldName = tab.Name;
+        tab.Name = trimmed;
+
+        RepointTargets(oldName, trimmed);
+
+        if (string.Equals(_selectedTab, oldName, StringComparison.OrdinalIgnoreCase))
+            _selectedTab = trimmed;
+
+        RefreshTabs();
+        RebuildVisibleRows();
+        SaveConfig();
+        return null;
+    }
+
+    /// <summary>
+    /// Deletes a tab, moving every target that belonged to it back to General rather than deleting
+    /// them along with it — losing a grouping is not the same as losing the hosts in it, and a
+    /// "delete tab" action must never be a surprise way to stop monitoring something. Returns why it
+    /// could not be done, or null on success.
+    /// </summary>
+    public string? DeleteTab(TabItem tab)
+    {
+        if (tab.IsDefaultTab)
+            return "The General tab can't be deleted — it's where ungrouped targets are kept.";
+
+        var config = _tabs.Find(t => string.Equals(t.Name, tab.Name, StringComparison.OrdinalIgnoreCase));
+        if (config is not null) _tabs.Remove(config);
+        Tabs.Remove(tab);
+
+        RepointTargets(tab.Name, "");
+
+        if (string.Equals(_selectedTab, tab.Name, StringComparison.OrdinalIgnoreCase))
+            _selectedTab = TabConfig.DefaultName;
+
+        ApplyTabStateToTargets();
+        RefreshTabs();
+        RebuildVisibleRows();
+        SaveConfig();
+        return null;
+    }
+
+    /// <summary>
+    /// Moves every target in <paramref name="fromTab"/> onto <paramref name="toTab"/>, via each
+    /// target's own <see cref="PingTarget.UpdateConfig"/> rather than the view model's public
+    /// <see cref="UpdateTarget"/> — that path calls <see cref="EnsureTab"/> and saves once per
+    /// target, both wrong here: no new tab is being introduced, and this can move many targets at
+    /// once, which must persist as one write rather than one per target.
+    /// </summary>
+    private void RepointTargets(string fromTab, string toTab)
+    {
+        foreach (var row in Rows)
+        {
+            if (!string.Equals(TabConfig.Normalise(row.Target.Config.Tab), fromTab, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            var updated = row.Target.Config.Clone();
+            updated.Tab = toTab;
+            row.Target.UpdateConfig(updated);
+            row.Refresh(_settings.CertWarnDays, row.Target.TimeoutMsFrom(_settings));
+        }
+    }
+
     /// <summary>Refreshes each tab's tally. Called from the render tick, like everything else.</summary>
     private void RefreshTabs()
     {

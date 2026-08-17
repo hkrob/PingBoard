@@ -459,6 +459,56 @@ public sealed partial class BoardView : UserControl
     private void OnMuteTab(object sender, RoutedEventArgs e) => SetTabMuted(sender, true);
     private void OnUnmuteTab(object sender, RoutedEventArgs e) => SetTabMuted(sender, false);
 
+    private async void OnRenameTab(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            if (sender is FrameworkElement { DataContext: TabItem tab })
+                await RenameTabDialog.ShowAsync(XamlRoot, Vm, tab);
+        }
+        catch (Exception ex) { CrashLog.Write(ex); }
+    }
+
+    private async void OnDeleteTab(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            if (sender is not FrameworkElement { DataContext: TabItem tab }) return;
+
+            if (tab.IsDefaultTab)
+            {
+                await new ContentDialog
+                {
+                    XamlRoot = XamlRoot,
+                    Title = "Can't delete this tab",
+                    Content = "The General tab can't be deleted — it's where ungrouped targets are kept.",
+                    CloseButtonText = "OK",
+                }.ShowAsync();
+                return;
+            }
+
+            var count = Vm.Rows.Count(r => string.Equals(
+                TabConfig.Normalise(r.Target.Config.Tab), tab.Name, StringComparison.OrdinalIgnoreCase));
+
+            var confirm = new ContentDialog
+            {
+                XamlRoot = XamlRoot,
+                Title = "Delete tab",
+                Content = count > 0
+                    ? $"Delete “{tab.Name}”? Its {count} target{(count == 1 ? "" : "s")} "
+                      + $"{(count == 1 ? "moves" : "move")} to General — nothing is removed."
+                    : $"Delete “{tab.Name}”?",
+                PrimaryButtonText = "Delete",
+                CloseButtonText = "Cancel",
+                DefaultButton = ContentDialogButton.Close,
+            };
+
+            if (await confirm.ShowAsync() != ContentDialogResult.Primary) return;
+            Vm.DeleteTab(tab);
+        }
+        catch (Exception ex) { CrashLog.Write(ex); }
+    }
+
     /// <summary>
     /// Muting a tab keeps it running and only withholds the alerts, which is the difference
     /// between it and disabling: that stops the probes and loses the record.
