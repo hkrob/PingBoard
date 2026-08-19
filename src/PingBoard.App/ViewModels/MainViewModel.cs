@@ -717,6 +717,36 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     }
 
     /// <summary>
+    /// Moves a tab one place left (<paramref name="delta"/> -1) or right (+1) in the strip, and
+    /// persists the new order. A no-op at either end rather than wrapping — nudging the leftmost
+    /// tab left should do nothing, not silently jump it to the far right.
+    /// <para>
+    /// Reordering <see cref="Tabs"/> is enough on its own to move the tab visually; <see cref="_tabs"/>
+    /// is reordered too only so <see cref="SaveConfig"/> persists positions that match what is on
+    /// screen — <c>ConfigStore.WriteTabs</c> derives each tab's stored <see cref="TabConfig.Order"/>
+    /// from list position at save time rather than trusting a stale value carried in the object.
+    /// </para>
+    /// </summary>
+    public void MoveTab(TabItem tab, int delta)
+    {
+        var uiIndex = Tabs.IndexOf(tab);
+        var newUiIndex = uiIndex + delta;
+        if (uiIndex < 0 || newUiIndex < 0 || newUiIndex >= Tabs.Count) return;
+
+        Tabs.Move(uiIndex, newUiIndex);
+
+        var configIndex = _tabs.FindIndex(t => string.Equals(t.Name, tab.Name, StringComparison.OrdinalIgnoreCase));
+        if (configIndex >= 0)
+        {
+            var config = _tabs[configIndex];
+            _tabs.RemoveAt(configIndex);
+            _tabs.Insert(configIndex + delta, config);
+        }
+
+        SaveConfig();
+    }
+
+    /// <summary>
     /// Renames a tab and repoints every target that belonged to it, or returns why it could not be
     /// done. Null means it succeeded.
     /// <para>

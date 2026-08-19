@@ -490,6 +490,14 @@ public sealed partial class BoardView : UserControl
         catch (Exception ex) { CrashLog.Write(ex); }
     }
 
+    private void OnMoveTabLeft(object sender, RoutedEventArgs e) => MoveTab(sender, -1);
+    private void OnMoveTabRight(object sender, RoutedEventArgs e) => MoveTab(sender, 1);
+
+    private void MoveTab(object sender, int delta)
+    {
+        if (sender is FrameworkElement { DataContext: TabItem tab }) Vm.MoveTab(tab, delta);
+    }
+
     private async void OnNewTab(object sender, RoutedEventArgs e)
     {
         try { await NewTabDialog.ShowAsync(XamlRoot, Vm); }

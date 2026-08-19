@@ -78,6 +78,12 @@
                                     <MenuFlyoutItem Text="Filter by tags…" Click="OnFilterTabByTags" />
                                     <MenuFlyoutItem Text="Filter by site…" Click="OnFilterTabBySite" />
                                     <MenuFlyoutSeparator />
+                                    <!-- Offered on every tab, including the ends of the strip — a
+                                         no-op nudge past either end is simpler and more honest than
+                                         disabling the item and leaving the user to guess why. -->
+                                    <MenuFlyoutItem Text="Move left" Click="OnMoveTabLeft" />
+                                    <MenuFlyoutItem Text="Move right" Click="OnMoveTabRight" />
+                                    <MenuFlyoutSeparator />
                                     <!-- Both offered even on the General tab, which refuses both
                                          with an explanation on click — simpler and more honest than
                                          hiding the option and leaving the user to guess why it is
