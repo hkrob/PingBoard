@@ -1388,7 +1388,7 @@ internal static class SelfTest
 
         var impliedSite = ConfigStore.Load(implied).Sites.FirstOrDefault(s => s.Name == "Northcliffe");
         Check("sites: a site with no section is reconstructed from membership",
-            impliedSite.Name == "Northcliffe" && impliedSite.Abbreviation.Length == 0);
+            impliedSite is not null && impliedSite.Abbreviation.Length == 0);
 
         // Autosave paths pass no sites; they must not delete the registry, same contract as tabs.
         ConfigStore.Save(path, new Settings(), targets);

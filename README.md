@@ -1,5 +1,7 @@
 # PingBoard
 
+[![CI](https://github.com/hkrob/PingBoard/actions/workflows/ci.yml/badge.svg)](https://github.com/hkrob/PingBoard/actions/workflows/ci.yml)
+
 An always-on ping monitor for Windows 11. Watches a list of hosts, shows what is up and what is
 down, and keeps enough history to tell you *how* something is failing rather than just that it is.
 
@@ -91,7 +93,7 @@ structurally — it is a separate project — so the part that has to be correct
 stress-tested without XAML in the way.
 
 ```bash
-dotnet run --project src/PingBoard.Harness -- --selftest        # 240 assertions
+dotnet run --project src/PingBoard.Harness -- --selftest        # 391 assertions
 dotnet run --project src/PingBoard.Harness -- board.ini --seconds 300
 ```
 

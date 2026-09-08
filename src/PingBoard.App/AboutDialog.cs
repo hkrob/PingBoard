@@ -81,51 +81,71 @@ public static class AboutDialog
 
         check.Click += async (_, _) =>
         {
-            check.IsEnabled = false;
-            status.Text = "Checking…";
-
-            pending = await UpdateCheck.CheckAsync(Current, CancellationToken.None);
-
-            check.IsEnabled = true;
-
-            if (pending.Error is { } error)
+            // An async void handler that throws takes the process down with it, and everything
+            // downstream of this button is a network call this code does not fully control.
+            try
             {
-                status.Text = "Could not check for updates — " + error;
-                return;
-            }
+                check.IsEnabled = false;
+                status.Text = "Checking…";
 
-            if (!pending.Available)
+                pending = await UpdateCheck.CheckAsync(Current, CancellationToken.None);
+
+                check.IsEnabled = true;
+
+                if (pending.Error is { } error)
+                {
+                    status.Text = "Could not check for updates — " + error;
+                    return;
+                }
+
+                if (!pending.Available)
+                {
+                    status.Text = $"You are on the latest version ({CurrentDisplay}).";
+                    return;
+                }
+
+                status.Text = $"Version {pending.LatestVersion} is available.";
+
+                // Offered, never taken automatically: this replaces the binary of something the
+                // user is relying on to be watching their network.
+                download.Visibility = pending.DownloadUrl.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+
+                if (pending.DownloadUrl.Length == 0)
+                    status.Text += " That release has no installer attached — see the release page.";
+            }
+            catch (Exception ex)
             {
-                status.Text = $"You are on the latest version ({CurrentDisplay}).";
-                return;
+                CrashLog.Write(ex);
+                check.IsEnabled = true;
+                status.Text = "Could not check for updates — " + ex.Message;
             }
-
-            status.Text = $"Version {pending.LatestVersion} is available.";
-
-            // Offered, never taken automatically: this replaces the binary of something the user
-            // is relying on to be watching their network.
-            download.Visibility = pending.DownloadUrl.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
-
-            if (pending.DownloadUrl.Length == 0)
-                status.Text += " That release has no installer attached — see the release page.";
         };
 
         download.Click += async (_, _) =>
         {
-            download.IsEnabled = false;
-            status.Text = "Downloading…";
-
-            var (path, error) = await UpdateInstaller.DownloadAsync(pending.DownloadUrl, CancellationToken.None);
-
-            if (error is not null)
+            try
             {
-                status.Text = "Download failed — " + error;
-                download.IsEnabled = true;
-                return;
-            }
+                download.IsEnabled = false;
+                status.Text = "Downloading…";
 
-            status.Text = "Starting the installer. PingBoard will close.";
-            UpdateInstaller.Launch(path);
+                var (path, error) = await UpdateInstaller.DownloadAsync(pending.DownloadUrl, CancellationToken.None);
+
+                if (error is not null)
+                {
+                    status.Text = "Download failed — " + error;
+                    download.IsEnabled = true;
+                    return;
+                }
+
+                status.Text = "Starting the installer. PingBoard will close.";
+                UpdateInstaller.Launch(path);
+            }
+            catch (Exception ex)
+            {
+                CrashLog.Write(ex);
+                status.Text = "Download failed — " + ex.Message;
+                download.IsEnabled = true;
+            }
         };
 
         await dialog.ShowAsync();

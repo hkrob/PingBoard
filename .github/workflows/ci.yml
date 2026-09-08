@@ -1,0 +1,29 @@
+name: CI
+
+# WinUI 3 needs the real thing, not a container: windows-latest is the only runner that has the
+# Windows App SDK's runtime bits available for a self-contained win-x64 publish to link against.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Restore
+        run: dotnet restore PingBoard.slnx
+
+      - name: Build (Release)
+        run: dotnet build PingBoard.slnx -c Release --no-restore
+
+      - name: Self-test (PingBoard.Core, headless)
+        run: dotnet run --project src/PingBoard.Harness -c Release --no-build -- --selftest

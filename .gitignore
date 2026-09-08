@@ -13,3 +13,10 @@ installer/output/
 *.ini.tmp
 pingboard-events.csv*
 crash.log
+*.outages.csv
+*.traces.txt
+
+# A dev config dropped at the repo root for local testing. Real boards belong in
+# %AppData%\PingBoard, never in source control — this only catches the common slip of testing
+# against a file left beside the source.
+/config.ini
