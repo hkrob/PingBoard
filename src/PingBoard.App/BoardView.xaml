@@ -286,6 +286,18 @@
                 BorderThickness="0,0,0,1"
                 BorderBrush="{ThemeResource RowSeparatorBrush}"
                 Padding="14,7">
+            <!-- Horizontal scroll is driven programmatically from the board's own ScrollViewer
+                 (see BoardView.xaml.cs) rather than by the user, so the mode is Disabled and the
+                 bar hidden — this exists only to keep the header lined up with whichever columns
+                 are actually on screen once the board is wider than the window. Without it, the
+                 header stays put while the rows underneath scroll, and a header ends up sitting
+                 over a column it does not describe. -->
+            <ScrollViewer x:Name="HeaderScroll"
+                          HorizontalScrollMode="Disabled"
+                          HorizontalScrollBarVisibility="Hidden"
+                          VerticalScrollMode="Disabled"
+                          VerticalScrollBarVisibility="Hidden"
+                          ZoomMode="Disabled">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="{x:Bind vm:ColumnLayout.Instance.Pos0, Mode=OneWay}" />
@@ -342,6 +354,7 @@
                 <TextBlock Grid.Column="{x:Bind vm:ColumnLayout.Instance.IdxSiteAbbreviation, Mode=OneWay}"               Tag="Site Abbr"       Text="Site Abbr"       Style="{StaticResource HeaderTextStyle}"                           Visibility="{x:Bind vm:ColumnLayout.Instance.SiteAbbreviationVis, Mode=OneWay}" />
                 <TextBlock Grid.Column="{x:Bind vm:ColumnLayout.Instance.IdxTags, Mode=OneWay}"                            Tag="Tags"            Text="Tags"            Style="{StaticResource HeaderTextStyle}"                           Visibility="{x:Bind vm:ColumnLayout.Instance.TagsVis, Mode=OneWay}" />
             </Grid>
+            </ScrollViewer>
         </Border>
 
         <!-- The board. A virtualized ListView with a hand-built header rather than a third-party

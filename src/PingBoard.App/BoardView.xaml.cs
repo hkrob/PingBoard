@@ -1,6 +1,7 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
 using PingBoard.App.ViewModels;
 using PingBoard.Core;
 using Windows.System;
@@ -40,7 +41,44 @@ public sealed partial class BoardView : UserControl
         // inside their scope, and a freshly opened window has focus nowhere — so Ctrl+= did
         // nothing until the user happened to click a row first. This also makes Ins, Del and F2
         // work immediately rather than after a click, which was always the case and always wrong.
-        Loaded += (_, _) => BoardList.Focus(FocusState.Programmatic);
+        Loaded += (_, _) =>
+        {
+            BoardList.Focus(FocusState.Programmatic);
+            HookHeaderScrollSync();
+        };
+    }
+
+    /// <summary>
+    /// Keeps the hand-built column header lined up with the board underneath once it needs to
+    /// scroll horizontally. The header is a separate element from the ListView (see BoardView.xaml)
+    /// so nothing connects them by default — without this, scrolling the board leaves the header
+    /// exactly where it was, and whichever header ends up over a column no longer describes it.
+    /// <para>
+    /// The ListView doesn't expose its internal ScrollViewer as a named element, so it has to be
+    /// found by walking the visual tree once the template has been applied — safe to do from
+    /// UserControl.Loaded, since a child's own Loaded has already fired by the time its parent's
+    /// does.
+    /// </para>
+    /// </summary>
+    private void HookHeaderScrollSync()
+    {
+        if (FindDescendant<ScrollViewer>(BoardList) is not { } boardScroll) return;
+
+        boardScroll.ViewChanged += (_, _) =>
+            HeaderScroll.ChangeView(boardScroll.HorizontalOffset, null, null, disableAnimation: true);
+    }
+
+    private static T? FindDescendant<T>(DependencyObject root) where T : DependencyObject
+    {
+        var count = VisualTreeHelper.GetChildrenCount(root);
+        for (var i = 0; i < count; i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            if (child is T match) return match;
+            if (FindDescendant<T>(child) is { } found) return found;
+        }
+
+        return null;
     }
 
     public MainViewModel Vm { get; }
