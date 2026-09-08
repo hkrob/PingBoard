@@ -1,5 +1,7 @@
 # PingBoard
 
+[![CI](https://github.com/hkrob/PingBoard/actions/workflows/ci.yml/badge.svg)](https://github.com/hkrob/PingBoard/actions/workflows/ci.yml)
+
 An always-on ping monitor for Windows 11. Watches a list of hosts, shows what is up and what is
 down, and keeps enough history to tell you *how* something is failing rather than just that it is.
 
