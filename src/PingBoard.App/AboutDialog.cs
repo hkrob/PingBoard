@@ -137,8 +137,15 @@ public static class AboutDialog
                     return;
                 }
 
-                status.Text = "Starting the installer. PingBoard will close.";
-                UpdateInstaller.Launch(path);
+                if (UpdateInstaller.Launch(path))
+                {
+                    status.Text = "Starting the installer. PingBoard will close.";
+                }
+                else
+                {
+                    status.Text = "Could not start the installer — see crash.log for details.";
+                    download.IsEnabled = true;
+                }
             }
             catch (Exception ex)
             {

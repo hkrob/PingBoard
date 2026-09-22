@@ -8,7 +8,7 @@
 ; Output lands in installer\output\PingBoard-<version>-setup.exe.
 
 #define AppName        "PingBoard"
-#define AppVersion     "1.11.14"
+#define AppVersion     "1.11.15"
 #define AppPublisher   "hkrob"
 #define AppExeName     "PingBoard.App.exe"
 #define AppUrl         "https://github.com/hkrob/PingBoard"
@@ -117,6 +117,45 @@ begin
   Result := InstalledVersion() <> '';
 end;
 
+{ The Nth dot-separated component of a "1.11.14"-style version string, or 0 past the end - so
+  comparing "1.9" against "1.10.0" still reads as component-wise, not as a string. }
+function VersionPart(const S: String; Index: Integer): Integer;
+var
+  Work, Piece: String;
+  DotPos, I: Integer;
+begin
+  Work := S;
+  Piece := '';
+  for I := 0 to Index do
+  begin
+    DotPos := Pos('.', Work);
+    if DotPos = 0 then
+    begin
+      Piece := Work;
+      Work := '';
+    end
+    else
+    begin
+      Piece := Copy(Work, 1, DotPos - 1);
+      Work := Copy(Work, DotPos + 1, Length(Work));
+    end;
+  end;
+  Result := StrToIntDef(Piece, 0);
+end;
+
+{ >0 when A is newer than B, 0 when equal, <0 when A is older. }
+function CompareVersions(const A, B: String): Integer;
+var
+  I: Integer;
+begin
+  Result := 0;
+  for I := 0 to 2 do
+  begin
+    Result := VersionPart(A, I) - VersionPart(B, I);
+    if Result <> 0 then Exit;
+  end;
+end;
+
 { An upgrade should not re-ask questions that were answered the last time. UsePreviousTasks already
   carries the answers forward, so showing the page again only invites the user to change something
   by accident - and makes a routine update look like a fresh install, which is exactly the
@@ -150,7 +189,23 @@ end;
 function InitializeSetup(): Boolean;
 var
   ResultCode: Integer;
+  Installed: String;
 begin
+  Installed := InstalledVersion();
+
+  { IsUpgrade() only asks "is anything installed", not "which is newer" - so a stale installer
+    run over a newer install (an old download, an old link) would present as a routine update and
+    silently downgrade. Ask first; the uninstall registry entry has no notion of direction. }
+  if (Installed <> '') and (CompareVersions(Installed, '{#AppVersion}') > 0) then
+  begin
+    if MsgBox('Version ' + Installed + ' is already installed, which is newer than this installer ' +
+              '({#AppVersion}). Continue and downgrade anyway?', mbConfirmation, MB_YESNO) = IDNO then
+    begin
+      Result := False;
+      Exit;
+    end;
+  end;
+
   Exec('taskkill.exe', '/F /IM {#AppExeName}', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Result := True;
 end;

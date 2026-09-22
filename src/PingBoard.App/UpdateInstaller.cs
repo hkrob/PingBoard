@@ -63,16 +63,23 @@ public static class UpdateInstaller
     }
 
     /// <summary>Runs the downloaded installer and exits, so it can replace the running files.</summary>
-    public static void Launch(string installerPath)
+    /// <returns>
+    /// False if the process could not be started — e.g. antivirus quarantined the freshly-written
+    /// exe. The caller needs this: without it, a swallowed failure here leaves the About dialog
+    /// telling the user "PingBoard will close" while the button sits disabled and nothing happens.
+    /// </returns>
+    public static bool Launch(string installerPath)
     {
         try
         {
             Process.Start(new ProcessStartInfo(installerPath) { UseShellExecute = true });
             App.Window?.ExitApplication();
+            return true;
         }
         catch (Exception ex)
         {
             CrashLog.Write(ex);
+            return false;
         }
     }
 
