@@ -23,8 +23,14 @@ public static class UpdateInstaller
     /// <summary>
     /// Fetches the installer into the temp folder.
     /// </summary>
+    /// <param name="expectedSha256">
+    /// The digest GitHub publishes for the asset, as lower-case hex, or empty to skip the check for
+    /// a release old enough not to carry one. When present a mismatch is fatal: a truncated or
+    /// altered installer is deleted rather than handed to Windows to run.
+    /// </param>
     /// <returns>The downloaded path, or an error message. Exactly one is non-null.</returns>
-    public static async Task<(string Path, string? Error)> DownloadAsync(string url, CancellationToken ct)
+    public static async Task<(string Path, string? Error)> DownloadAsync(
+        string url, string expectedSha256, CancellationToken ct)
     {
         if (!IsTrusted(url))
             return ("", "the download link was not a GitHub HTTPS address");
@@ -47,6 +53,22 @@ public static class UpdateInstaller
             await using (var file = File.Create(target))
             {
                 await source.CopyToAsync(file, ct).ConfigureAwait(false);
+            }
+
+            if (!string.IsNullOrEmpty(expectedSha256))
+            {
+                string actual;
+                await using (var written = File.OpenRead(target))
+                {
+                    var hash = await System.Security.Cryptography.SHA256.HashDataAsync(written, ct).ConfigureAwait(false);
+                    actual = Convert.ToHexStringLower(hash);
+                }
+
+                if (!string.Equals(actual, expectedSha256, StringComparison.OrdinalIgnoreCase))
+                {
+                    try { File.Delete(target); } catch (IOException) { /* it will not be run either way */ }
+                    return ("", "the downloaded installer did not match the checksum GitHub published for it, so it was discarded");
+                }
             }
 
             return (target, null);

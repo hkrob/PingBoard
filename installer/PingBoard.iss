@@ -8,7 +8,7 @@
 ; Output lands in installer\output\PingBoard-<version>-setup.exe.
 
 #define AppName        "PingBoard"
-#define AppVersion     "1.11.15"
+#define AppVersion     "1.11.16"
 #define AppPublisher   "hkrob"
 #define AppExeName     "PingBoard.App.exe"
 #define AppUrl         "https://github.com/hkrob/PingBoard"
@@ -90,9 +90,13 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; \
 Filename: "{app}\{#AppExeName}"; Description: "Launch {#AppName}"; Flags: nowait postinstall skipifsilent
 
 [UninstallDelete]
-; Publishing writes nothing outside {app}, but the app itself may leave a crash log beside its
-; binaries if the data directory was ever unwritable.
-Type: filesandordirs; Name: "{app}"
+; Deliberately not "filesandordirs {app}". The directory page lets the user type any folder, and
+; typing an existing one (C:\Tools, say) installs straight into it - after which a wholesale delete
+; of {app} on uninstall would take every unrelated file in that folder with it. The app writes
+; nothing into its own folder at runtime (crash.log, config and state all live under %AppData%), so
+; the uninstaller's own record of what it installed is already complete; this only removes the
+; folder itself once it is empty.
+Type: dirifempty; Name: "{app}"
 
 [Code]
 

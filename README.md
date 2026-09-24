@@ -270,10 +270,16 @@ worked and calling it a network fault sends you to look in the wrong place.
 
 Ports default to 80 and 443 by scheme. **Redirects are not followed** — a 301 is a real answer
 about *this* URL, and chasing it would silently measure a different endpoint than the one
-configured. The response body is never read, so a target serving a large file costs nothing. The
-configured hostname is used for the request even though the address is resolved separately, because
-connecting by IP alone sends no SNI and the wrong `Host` header, and a virtual host would answer for
-the wrong site.
+configured. The configured hostname is used for the request even though the address is resolved
+separately, because connecting by IP alone sends no SNI and the wrong `Host` header, and a virtual
+host would answer for the wrong site.
+
+**Probes ask with `HEAD`, so no page is downloaded.** Earlier versions sent a `GET` and ignored the
+body, which does not make it free: .NET drains an unread body to reuse the connection, and a board of
+thirty well-known sites at the default interval was measured pulling about 4 MB/s around the clock.
+Because some servers refuse `HEAD` while serving `GET` normally, a failing `HEAD` is always confirmed
+with a `GET` before anything is reported — such a server can never cause a false alarm — and that
+target then sticks to `GET`, asking for a compressed body and reading at most 64 KB of it.
 
 ### Maintenance windows
 

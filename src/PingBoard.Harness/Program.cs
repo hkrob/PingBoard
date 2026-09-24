@@ -27,18 +27,25 @@ internal static class Program
     /// a newer release. Testing only "am I current" exercises the half of the path that never
     /// matters.
     /// </para>
-    /// <para>Usage: <c>--updatecheck [current-version]</c>, default 0.0.0.</para>
+    /// <para>
+    /// Usage: <c>--updatecheck [current-version] [--json saved-response.json]</c>, default 0.0.0.
+    /// With <c>--json</c> it parses a response saved earlier instead of calling GitHub — the
+    /// anonymous API allows sixty calls an hour, and a parser change should not have to wait for one.
+    /// </para>
     /// </summary>
     private static async Task<int> RunUpdateCheckAsync(string[] args)
     {
         var raw = PositionalArg(args) ?? "0.0.0";
         var current = UpdateCheck.ParseVersion(raw) ?? new Version(0, 0, 0);
+        var saved = ArgString(args, "--json");
 
         Console.WriteLine($"pretending to be version {current}");
-        Console.WriteLine("querying the live GitHub releases API...");
+        Console.WriteLine(saved is null ? "querying the live GitHub releases API..." : $"parsing {saved}...");
         Console.WriteLine();
 
-        var info = await UpdateCheck.CheckAsync(current, CancellationToken.None);
+        var info = saved is null
+            ? await UpdateCheck.CheckAsync(current, CancellationToken.None)
+            : UpdateCheck.ParseRelease(await File.ReadAllTextAsync(saved), current);
 
         if (info.Error is { } error)
         {
@@ -50,6 +57,7 @@ internal static class Program
         Console.WriteLine($"  update?     : {(info.Available ? "YES" : "no, already current")}");
         Console.WriteLine($"  release page: {info.ReleaseUrl}");
         Console.WriteLine($"  installer   : {(info.DownloadUrl.Length > 0 ? info.DownloadUrl : "(none attached)")}");
+        Console.WriteLine($"  sha-256     : {(info.DownloadSha256.Length > 0 ? info.DownloadSha256 : "(not published)")}");
 
         return 0;
     }
@@ -203,8 +211,14 @@ internal static class Program
             : fallback;
     }
 
+    private static string? ArgString(string[] args, string name)
+    {
+        var index = Array.IndexOf(args, name);
+        return index >= 0 && index + 1 < args.Length ? args[index + 1] : null;
+    }
+
     /// <summary>Flags that consume the following token, so it isn't mistaken for the config path.</summary>
-    private static readonly string[] ValueFlags = ["--seconds"];
+    private static readonly string[] ValueFlags = ["--seconds", "--json"];
 
     private static string? PositionalArg(string[] args)
     {

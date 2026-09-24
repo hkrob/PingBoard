@@ -199,7 +199,14 @@ public sealed class ProbeScheduler : IAsyncDisposable
         // effect on the next lookup instead of at the next restart.
         _dns.SetTtl(settings.DnsCacheSeconds);
 
-        lock (_targetsGate) RestaggerLocked();
+        lock (_targetsGate)
+        {
+            // Same reasoning as the TTL: the rolling window is a setting the dialog offers, so it
+            // has to apply to the board that is running rather than only to the next launch.
+            foreach (var target in _targets) target.ResizeHistory(settings.RollingWindow);
+
+            RestaggerLocked();
+        }
     }
 
     /// <summary>
@@ -354,6 +361,13 @@ public sealed class ProbeScheduler : IAsyncDisposable
         {
             // Shutting down.
         }
+        catch (ObjectDisposedException)
+        {
+            // The probe was torn down under us: the target was removed, or its probe kind was
+            // changed and the old probe disposed mid-flight. Neither says anything about the host,
+            // and recording it as a timeout could raise a "down" alert for a target the user had
+            // just deleted.
+        }
         catch (Exception)
         {
             // A probe must never take the loop down with it.
@@ -490,7 +504,12 @@ public sealed class ProbeScheduler : IAsyncDisposable
     private async Task CheckCertificateAsync(PingTarget target, Settings settings)
     {
         var ct = _cts?.Token ?? CancellationToken.None;
-        await _certSlots.WaitAsync(ct).ConfigureAwait(false);
+
+        // Outside the try, a cancelled or disposed wait escaped this fire-and-forget task as an
+        // unobserved exception, which the app logs to crash.log — noise on every shutdown that
+        // happened to catch a read queued behind the slot limit.
+        try { await _certSlots.WaitAsync(ct).ConfigureAwait(false); }
+        catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException) { return; }
 
         try
         {

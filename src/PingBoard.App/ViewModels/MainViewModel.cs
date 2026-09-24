@@ -22,6 +22,20 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     /// <summary>Render rate. Fast enough to feel live, slow enough to cost nothing.</summary>
     private const int RefreshMs = 250;
 
+    /// <summary>
+    /// Refresh rate while the window is hidden in the tray or minimised. Only the tally behind the
+    /// tray tooltip is kept current then — see <see cref="SetBoardVisible"/>.
+    /// </summary>
+    private const int HiddenRefreshMs = 1000;
+
+    /// <summary>
+    /// False while the window is in the tray or minimised, which for an always-on monitor is most
+    /// of its life. Rebuilding every row's text, badges and column widths four times a second for
+    /// a board nobody can see kept the UI thread alone at about 1.4 % of a core with forty targets;
+    /// hidden, it now measures under 0.5 %.
+    /// </summary>
+    private bool _boardVisible = true;
+
     /// <summary>Counter flush interval. Never per probe — that would be continuous disk writes.</summary>
     private const int AutosaveMs = 60_000;
 
@@ -274,7 +288,11 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         _outages = _settings.OutageLogEnabled
             ? new OutageStore(ConfigStore.OutagePathFor(ConfigPath))
             : null;
-        if (_outages is not null) Journal.Restore(_outages.Load());
+
+        // Restored unconditionally — to nothing, when this board keeps no outage log. The journal
+        // outlives the board it was filled by, so opening a second board with the log switched off
+        // used to go on showing the first board's outages under the second one's name.
+        Journal.Restore(_outages?.Load() ?? []);
 
         // Constructed unconditionally, even with every sink disabled: Enqueue is a cheap early
         // return in that case, and having the dispatcher already there means enabling a sink from
@@ -337,9 +355,31 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
     // ---------------------------------------------------------------- refresh
 
+    /// <summary>
+    /// Told by the window when the board goes out of sight or comes back. Hidden, the refresh
+    /// drops to once a second and does only what the tray needs — the up/down tally, the alert
+    /// health and the mute state behind its tooltip. Nothing about probing or alerting changes;
+    /// this is purely the cost of drawing. Coming back refreshes everything at once, so the board
+    /// is never shown stale.
+    /// </summary>
+    public void SetBoardVisible(bool visible)
+    {
+        if (_boardVisible == visible) return;
+        _boardVisible = visible;
+
+        _refreshTimer.Interval = TimeSpan.FromMilliseconds(visible ? RefreshMs : HiddenRefreshMs);
+
+        if (visible && _refreshTimer.IsRunning)
+        {
+            RefreshRows();
+            FitColumnsNow();
+        }
+    }
+
     private void RefreshRows()
     {
-        foreach (var row in Rows) row.Refresh(_settings.CertWarnDays, row.Target.TimeoutMsFrom(_settings), _sites);
+        if (_boardVisible)
+            foreach (var row in Rows) row.Refresh(_settings.CertWarnDays, row.Target.TimeoutMsFrom(_settings), _sites);
 
         var up = 0;
         var down = 0;
@@ -347,7 +387,8 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
         foreach (var row in Rows)
         {
-            var status = row.Snapshot.Status;
+            // Hidden, the row's snapshot is not being refreshed, so ask the engine directly.
+            var status = _boardVisible ? row.Snapshot.Status : row.Target.Status;
             if (status.IsOk()) up++;
             else if (status.IsFailure()) down++;
             else idle++;
@@ -362,9 +403,13 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             : "";
 
         RefreshMuteState();
-        RefreshTabs();
-        RefreshFilterMembership();
-        FitColumnsIfDue();
+
+        if (_boardVisible)
+        {
+            RefreshTabs();
+            RefreshFilterMembership();
+            FitColumnsIfDue();
+        }
 
         // Shown for the same reason as the alert failure above: being muted is a state you must be
         // able to see, or you will trust a monitor that has been told to stay quiet.
@@ -609,7 +654,10 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         var config = _tabs.Find(t => string.Equals(t.Name, tab.Name, StringComparison.OrdinalIgnoreCase));
         if (config is not null) config.Enabled = enabled;
 
+        var wereActive = Rows.Where(r => r.Target.IsActive).ToList();
         ApplyTabStateToTargets();
+        CloseOutagesForDeactivated(wereActive);
+
         SaveConfig();
     }
 
@@ -818,7 +866,11 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         if (string.Equals(_selectedTab, tab.Name, StringComparison.OrdinalIgnoreCase))
             _selectedTab = TabConfig.DefaultName;
 
+        // Rows land in General, which may itself be switched off.
+        var wereActive = Rows.Where(r => r.Target.IsActive).ToList();
         ApplyTabStateToTargets();
+        CloseOutagesForDeactivated(wereActive);
+
         RefreshTabs();
         RebuildVisibleRows();
         SaveConfig();
@@ -1121,16 +1173,50 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         EnsureTab(config.Tab);
         UpsertSite(config.Site, null);
 
+        var oldName = row.Target.Config.Name;
+        var wasActive = row.Target.IsActive;
+
         row.Target.UpdateConfig(config);
         row.Refresh(_settings.CertWarnDays, row.Target.TimeoutMsFrom(_settings), _sites);
 
         ApplyTabStateToTargets();
+
+        // Paused, moved into a switched-off tab, or renamed: in each case no probe will ever record
+        // a recovery under the old identity, so an outage open under it is closed now.
+        if ((wasActive && !row.Target.IsActive)
+            || !string.Equals(oldName, config.Name, StringComparison.OrdinalIgnoreCase))
+        {
+            CloseOutagesFor(oldName);
+        }
+
         SaveConfig();
         ApplySort();
     }
 
+    /// <summary>
+    /// Ends any outage still open for a target the board is about to stop watching, in memory and
+    /// in the outage file — see <see cref="TransitionJournal.CloseOpen"/>.
+    /// </summary>
+    private void CloseOutagesFor(string targetName)
+    {
+        var closing = Journal.CloseOpen(targetName, DateTimeOffset.Now);
+        if (_outages is null) return;
+
+        foreach (var transition in closing) _outages.Append(transition);
+    }
+
+    /// <summary>Closes outages for every target that was being probed and no longer is.</summary>
+    private void CloseOutagesForDeactivated(IEnumerable<TargetRow> wereActive)
+    {
+        foreach (var row in wereActive)
+            if (!row.Target.IsActive)
+                CloseOutagesFor(row.Name);
+    }
+
     public void RemoveTarget(TargetRow row)
     {
+        CloseOutagesFor(row.Name);
+
         Rows.Remove(row);
         VisibleRows.Remove(row);
         _scheduler.RemoveTarget(row.Target);
@@ -1208,11 +1294,37 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Writes the whole board to a new file and switches to it: settings, targets, alert sinks,
+    /// tabs and sites, with the counters, history and outage log carried alongside.
+    /// <para>
+    /// This used to pass only settings and targets, and <see cref="ConfigStore.Save"/> reads null
+    /// as "keep whatever the destination file already has" — which for a new file is nothing. So
+    /// "Save config as" quietly produced a board with alerting switched off, every tab reset to
+    /// enabled and unmuted in alphabetical order, tag and site filters gone, and site
+    /// abbreviations blank; the copy then became the active board.
+    /// </para>
+    /// </summary>
+    public async Task SaveConfigAsAsync(string path)
+    {
+        ConfigStore.Save(path, _settings, Rows.Select(r => r.Target.Config), _alertSettings, _tabs, _sites);
+        StateStore.Save(ConfigStore.StatePathFor(path), Rows.Select(r => r.Target));
+
+        if (_settings.OutageLogEnabled)
+            new OutageStore(ConfigStore.OutagePathFor(path)).Rewrite(Journal.SnapshotForPersist());
+
+        SaveCounters();
+        await LoadAsync(path);
+    }
+
     private void SaveCountersIfDirty()
     {
         // Counters change on every probe but are only worth writing periodically. Skipping the
         // write when nothing has transitioned keeps an idle board completely silent on disk.
-        if (!_countersDirty && !Rows.Any(r => r.Snapshot.OkCount + r.Snapshot.NokCount > 0)) return;
+        //
+        // Read from the engine rather than the rows' snapshots, which are not refreshed while the
+        // window is hidden — a board started minimized would otherwise look forever empty here.
+        if (!_countersDirty && !Rows.Any(r => r.Target.Counters.Total > 0)) return;
         SaveCounters();
     }
 

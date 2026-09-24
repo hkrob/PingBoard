@@ -242,6 +242,33 @@ public sealed partial class TargetDialog : ContentDialog
             return;
         }
 
+        // A pasted URL is the commonest way to get this wrong, and it fails as a permanent DNS FAIL
+        // that says nothing about why. Split it into the fields it belongs in and let the user see
+        // the result before saving, rather than guessing silently.
+        if (Uri.TryCreate(address, UriKind.Absolute, out var url)
+            && (url.Scheme == Uri.UriSchemeHttp || url.Scheme == Uri.UriSchemeHttps)
+            && url.Host.Length > 0)
+        {
+            AddressBox.Text = url.Host;
+
+            // Probe before port: switching the probe kind re-defaults the port box.
+            ProbeBox.SelectedIndex = IndexFor(url.Scheme == Uri.UriSchemeHttps ? ProbeKind.Https : ProbeKind.Http);
+            PortBox.Value = url.Port;
+            if (url.PathAndQuery is { Length: > 1 } pathAndQuery) PathBox.Text = pathAndQuery;
+
+            Reject(args, "That was a URL, so it has been split into the host, probe, port and path "
+                         + "below. Check them and save again.");
+            return;
+        }
+
+        // host:port is the other habit — but an IPv6 literal is full of colons and is fine as-is.
+        if (address.Contains(':', StringComparison.Ordinal) && !IPAddress.TryParse(address, out _))
+        {
+            Reject(args, "Enter the address without a port — choose TCP, HTTP or HTTPS as the probe "
+                         + "and set the port in the Port box.");
+            return;
+        }
+
         if (name.Length == 0) name = address;
 
         // Names key the persisted counters, so a duplicate would silently merge two targets'
@@ -255,6 +282,14 @@ public sealed partial class TargetDialog : ContentDialog
         var kind = KindFor(ProbeBox.SelectedIndex);
         var isIcmp = kind == ProbeKind.Icmp;
         var isHttp = kind is ProbeKind.Http or ProbeKind.Https;
+
+        // A cleared NumberBox reads NaN, and (int)NaN is int.MinValue — which was saved as the port
+        // and failed every probe for the rest of the session as an unexplained timeout.
+        if (!isIcmp && (double.IsNaN(PortBox.Value) || PortBox.Value is < 1 or > 65535))
+        {
+            Reject(args, "Enter a port between 1 and 65535.");
+            return;
+        }
 
         var path = PathBox.Text.Trim();
         if (path.Length == 0) path = "/";

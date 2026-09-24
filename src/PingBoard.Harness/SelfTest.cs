@@ -57,6 +57,13 @@ internal static class SelfTest
             OutageStoreRoundTrip(scratch);
             CertificateArithmetic();
             CertificateWarnsOnce();
+            EditingAddressForgetsCertificate();
+            SleepKeepsAnAnnouncedOutageOpen();
+            JournalClosesOutagesWhenMonitoringStops();
+            HistoryResizesLive();
+            DegradedThresholdsRejectNonsense(scratch);
+            BracketedNamesRoundTrip(scratch);
+            UpdateReleaseParsing();
             ExportsAreParsable();
             SoftAlertWording();
         }
@@ -1698,7 +1705,13 @@ internal static class SelfTest
         // rather than assumed.
         string? seenAgent = null;
 
-        // Answers by path: /ok -> 200, /boom -> 500, /moved -> 302.
+        // Every request as "METHOD /path", so which verb the probe used can be asserted too.
+        var seen = new System.Collections.Concurrent.ConcurrentQueue<string>();
+
+        // Answers by path: /ok -> 200, /boom -> 500, /moved -> 302. /no-head refuses HEAD with 405
+        // and /head-403 with 403 — both serve GET normally, as real servers of each kind do.
+        // /big serves a 2 MB body to GET, which a HEAD must never pull.
+        var bigBody = new byte[2 * 1024 * 1024];
         _ = Task.Run(async () =>
         {
             while (listener.IsListening)
@@ -1706,13 +1719,26 @@ internal static class SelfTest
                 try
                 {
                     var context = await listener.GetContextAsync().ConfigureAwait(false);
+                    var method = context.Request.HttpMethod;
+                    var path = context.Request.Url?.AbsolutePath ?? "/";
                     seenAgent = context.Request.UserAgent;
-                    context.Response.StatusCode = context.Request.Url?.AbsolutePath switch
+                    seen.Enqueue($"{method} {path}");
+
+                    context.Response.StatusCode = (path, method) switch
                     {
-                        "/boom" => 500,
-                        "/moved" => 302,
+                        ("/boom", _) => 500,
+                        ("/moved", _) => 302,
+                        ("/no-head", "HEAD") => 405,
+                        ("/head-403", "HEAD") => 403,
                         _ => 200,
                     };
+
+                    if (path == "/big" && method == "GET")
+                    {
+                        context.Response.ContentLength64 = bigBody.Length;
+                        await context.Response.OutputStream.WriteAsync(bigBody).ConfigureAwait(false);
+                    }
+
                     context.Response.Close();
                 }
                 catch (Exception) { return; }
@@ -1748,6 +1774,42 @@ internal static class SelfTest
             Run("/moved", expect: 200).Status == TargetStatus.HttpError);
         Check("http: the demanded code still passes",
             Run("/ok", expect: 200).Status == TargetStatus.Ok);
+
+        // No body is transferred on the normal path: HEAD only.
+        seen.Clear();
+        Check("http: a large page probes OK", Run("/big").Status == TargetStatus.Ok);
+        Check("http: and is asked with HEAD, never a body-carrying GET",
+            seen.ToArray() is ["HEAD /big"] && !probe.UsesGet);
+
+        // A failure on HEAD's word alone is never reported — it is confirmed with GET.
+        seen.Clear();
+        Run("/boom");
+        Check("http: a HEAD failure is confirmed with a GET before it is reported",
+            seen.ToArray() is ["HEAD /boom", "GET /boom"]);
+        Check("http: a genuine failure does not switch the target to GET", !probe.UsesGet);
+
+        // Servers that refuse HEAD but serve GET must read as healthy — the reason HEAD was once
+        // avoided entirely.
+        foreach (var quirk in new[] { "/no-head", "/head-403" })
+        {
+            using var picky = new HttpProbe(useTls: false);
+            ProbeResult RunPicky() => picky
+                .ProbeAsync(address,
+                            new ProbeOptions(TimeoutMs: 5000, PayloadBytes: 0, Ttl: 64, Port: port,
+                                             Host: "localhost", Path: quirk),
+                            CancellationToken.None)
+                .GetAwaiter().GetResult();
+
+            seen.Clear();
+            Check($"http: {quirk} — a server that refuses HEAD but serves GET is OK, not a false alarm",
+                RunPicky().Status == TargetStatus.Ok);
+            Check($"http: {quirk} — and that target switches to GET", picky.UsesGet);
+
+            seen.Clear();
+            RunPicky();
+            Check($"http: {quirk} — later probes go straight to GET, one request each",
+                seen.ToArray() is [var only] && only.StartsWith("GET ", StringComparison.Ordinal));
+        }
 
         // Nothing listening on a port that was free a moment ago.
         var deadPort = FreePort();
@@ -2265,6 +2327,270 @@ internal static class SelfTest
             !icmp.TryBeginCertCheck(6));
         Check("cert: an HTTPS target is due immediately", target.TryBeginCertCheck(6));
         Check("cert: and not due again straight afterwards", !target.TryBeginCertCheck(6));
+    }
+
+    /// <summary>
+    /// Editing where a target points forgets what the old endpoint said about itself.
+    /// <para>
+    /// The certificate read is scheduled hours out, so a reading kept across an address change went
+    /// on describing — and warning about — the previous server for up to a quarter of a day.
+    /// </para>
+    /// </summary>
+    private static void EditingAddressForgetsCertificate()
+    {
+        var settings = new Settings();
+        var config = new TargetConfig { Name = "tls", Address = "old.example.com", Probe = ProbeKind.Https, Port = 443 };
+        using var target = new PingTarget(config, settings);
+
+        var now = DateTimeOffset.Now;
+        var cert = new CertificateInfo("CN=old.example.com", "CN=CA", now.AddDays(-10), now.AddDays(3), true, "", now);
+
+        Check("cert edit: first read is due", target.TryBeginCertCheck(6));
+        target.SetCertificate(cert, warnDays: 14);
+        Check("cert edit: next read is hours away", !target.TryBeginCertCheck(6));
+
+        var renamedOnly = target.Config.Clone();
+        renamedOnly.Tab = "Elsewhere";
+        target.UpdateConfig(renamedOnly);
+        Check("cert edit: an unrelated edit keeps the reading", target.Certificate is { HasCertificate: true });
+
+        var moved = target.Config.Clone();
+        moved.Address = "new.example.com";
+        target.UpdateConfig(moved);
+        Check("cert edit: a new address drops the old server's certificate", target.Certificate is null);
+        Check("cert edit: and the new endpoint is read straight away", target.TryBeginCertCheck(6));
+
+        // The expiry warning re-arms too: the new server's certificate is news in its own right.
+        Check("cert edit: the new server's expiry is announced afresh",
+            target.SetCertificate(cert with { Subject = "CN=new.example.com" }, warnDays: 14) is not null);
+
+        var reported = target.Config.Clone();
+        reported.Port = 8443;
+        target.UpdateConfig(reported);
+        Check("cert edit: a port change counts as a different endpoint", target.Certificate is null);
+    }
+
+    /// <summary>
+    /// An outage that was announced before the machine slept stays open across the sleep, so the
+    /// first reply after waking closes it — and a host still down is not announced twice.
+    /// </summary>
+    private static void SleepKeepsAnAnnouncedOutageOpen()
+    {
+        var settings = new Settings { FailuresBeforeDown = 3 };
+        var now = DateTimeOffset.Now;
+
+        using var recovers = new PingTarget(new TargetConfig { Name = "recovers", Address = "10.0.0.1" }, settings);
+
+        StateTransition? down = null;
+        for (var i = 0; i < 3; i++)
+            down ??= recovers.Record(ProbeResult.Fail(TargetStatus.Timeout, 1_000 + i * 1_000, now), 3);
+
+        Check("sleep: the outage was announced before sleeping", down is { Up: false });
+
+        recovers.ForceStatus(TargetStatus.Suspended);
+        Check("sleep: the streak is still cleared", recovers.Snapshot().ConsecutiveFailures == 0);
+        Check("sleep: no 'down for' figure while nothing is observed", recovers.Snapshot().DownFor is null);
+
+        recovers.ForceStatus(TargetStatus.Unknown);   // resume
+        var back = recovers.Record(ProbeResult.Ok(5, System.Net.IPAddress.Loopback, 60_000, now), 3);
+
+        Check("sleep: the first reply after waking is announced as the recovery",
+            back is { Up: true, Kind: TransitionKind.Hard });
+        Check("sleep: measured from when the outage actually started",
+            back is { } b && b.DownFor == TimeSpan.FromMilliseconds(59_000));
+
+        using var stillDown = new PingTarget(new TargetConfig { Name = "still", Address = "10.0.0.2" }, settings);
+        for (var i = 0; i < 3; i++) stillDown.Record(ProbeResult.Fail(TargetStatus.Timeout, i, now), 3);
+
+        stillDown.ForceStatus(TargetStatus.Suspended);
+        stillDown.ForceStatus(TargetStatus.Unknown);
+
+        var repeats = 0;
+        for (var i = 0; i < 6; i++)
+            if (stillDown.Record(ProbeResult.Fail(TargetStatus.Timeout, 100_000 + i, now), 3) is not null) repeats++;
+
+        Check("sleep: a host still down after waking is not announced a second time", repeats == 0);
+
+        // A below-threshold streak is still forgotten outright, exactly as before.
+        using var blip = new PingTarget(new TargetConfig { Name = "blip", Address = "10.0.0.3" }, settings);
+        blip.Record(ProbeResult.Fail(TargetStatus.Timeout, 1, now), 3);
+        blip.ForceStatus(TargetStatus.Suspended);
+        blip.ForceStatus(TargetStatus.Unknown);
+        Check("sleep: an unannounced blip does not become a recovery",
+            blip.Record(ProbeResult.Ok(5, System.Net.IPAddress.Loopback, 2, now), 3) is null);
+
+        // Pausing is a deliberate stop, and keeps the full reset.
+        using var paused = new PingTarget(new TargetConfig { Name = "paused", Address = "10.0.0.4" }, settings);
+        for (var i = 0; i < 3; i++) paused.Record(ProbeResult.Fail(TargetStatus.Timeout, i, now), 3);
+        paused.ForceStatus(TargetStatus.Paused);
+        paused.ForceStatus(TargetStatus.Unknown);
+        Check("pause: still resets the outage entirely",
+            paused.Record(ProbeResult.Ok(5, System.Net.IPAddress.Loopback, 9, now), 3) is null);
+    }
+
+    /// <summary>
+    /// An outage on a target the board stops watching is closed rather than left "ongoing".
+    /// </summary>
+    private static void JournalClosesOutagesWhenMonitoringStops()
+    {
+        var journal = new TransitionJournal();
+        var start = new DateTimeOffset(2026, 9, 1, 10, 0, 0, TimeSpan.Zero);
+
+        journal.Add(new StateTransition("Gone", false, start, TimeSpan.Zero, TargetStatus.Timeout, 3));
+        journal.Add(new StateTransition("gone", false, start.AddMinutes(1), TimeSpan.Zero,
+            TargetStatus.Degraded, 0, TransitionKind.Degraded));
+        journal.Add(new StateTransition("other", false, start, TimeSpan.Zero, TargetStatus.Timeout, 3));
+
+        var closing = journal.CloseOpen("GONE", start.AddMinutes(5));
+
+        Check("close: both kinds of open outage are closed, case-insensitively", closing.Count == 2);
+        Check("close: closing entries are recoveries of the right length",
+            closing.All(c => c.Up) && closing.Any(c => c.DownFor == TimeSpan.FromMinutes(5)));
+
+        var outages = journal.Outages(start.AddHours(3));
+        Check("close: the closed target no longer reads as ongoing",
+            !outages.Any(o => o.TargetName.Equals("gone", StringComparison.OrdinalIgnoreCase) && o.Ongoing));
+        Check("close: the recorded outage ends when monitoring stopped",
+            outages.Any(o => o.TargetName == "Gone" && o.Kind == TransitionKind.Hard
+                             && o.Duration == TimeSpan.FromMinutes(5)));
+        Check("close: other targets are untouched",
+            outages.Any(o => o.TargetName == "other" && o.Ongoing));
+        Check("close: closing twice adds nothing", journal.CloseOpen("gone", start.AddMinutes(9)).Count == 0);
+
+        // It survives a restart the same way everything else in the journal does.
+        var reloaded = new TransitionJournal();
+        reloaded.Restore(journal.SnapshotForPersist());
+        Check("close: still closed after a reload",
+            !reloaded.Outages(start.AddHours(3)).Any(o => o.TargetName.Equals("gone", StringComparison.OrdinalIgnoreCase) && o.Ongoing));
+    }
+
+    /// <summary>The rolling-window setting applies to the running board, keeping the newest samples.</summary>
+    private static void HistoryResizesLive()
+    {
+        var settings = new Settings { RollingWindow = 300 };
+        var target = new PingTarget(new TargetConfig { Name = "h", Address = "10.0.0.1" }, settings);
+        var now = DateTimeOffset.Now;
+
+        for (var i = 1; i <= 50; i++)
+            target.Record(ProbeResult.Ok(i, System.Net.IPAddress.Loopback, i, now), 3);
+
+        target.ResizeHistory(20);
+        var kept = target.RecentHistory(100);
+        Check("resize: shrinking keeps exactly the new capacity", target.HistoryCapacity == 20 && kept.Length == 20);
+        Check("resize: and it keeps the newest samples", kept[0].RttMs == 31 && kept[^1].RttMs == 50);
+
+        target.ResizeHistory(500);
+        Check("resize: growing keeps what was there", target.RecentHistory(1000).Length == 20);
+
+        var scheduler = new ProbeScheduler(settings);
+        scheduler.AddTarget(target);
+        scheduler.ApplySettings(new Settings { RollingWindow = 42 });
+        Check("resize: applying settings resizes every target", target.HistoryCapacity == 42);
+
+        scheduler.RemoveTarget(target);
+        _ = scheduler.DisposeAsync().AsTask().Wait(2000);
+    }
+
+    /// <summary>Hand-edited nonsense in the degraded thresholds means "off", never "everything".</summary>
+    private static void DegradedThresholdsRejectNonsense(string dir)
+    {
+        var settings = new Settings { DegradedLatencyMs = -1, DegradedLossPercent = -5 };
+        settings.Validate();
+        Check("validate: a negative latency threshold is off, not 1 ms", settings.DegradedLatencyMs == 0);
+        Check("validate: a negative loss threshold is off, not 0.1 %", settings.DegradedLossPercent == 0);
+
+        settings.DegradedLossPercent = double.NaN;
+        settings.Validate();
+        Check("validate: NaN loss threshold is off", settings.DegradedLossPercent == 0);
+
+        settings.DegradedLatencyMs = 80;
+        settings.DegradedLossPercent = 0.01;
+        settings.Validate();
+        Check("validate: a real latency threshold is kept", settings.DegradedLatencyMs == 80);
+        Check("validate: a tiny positive loss threshold is raised to the floor", settings.DegradedLossPercent == 0.1);
+
+        var path = Path.Combine(dir, "nan.ini");
+        File.WriteAllText(path, "[Settings]\nDegradedLatencyMs=-20\n\n[Target:t]\nAddress=10.0.0.1\nDegradedLossPercent=NaN\n");
+        var loaded = ConfigStore.Load(path);
+        Check("load: a negative global latency threshold loads as off", loaded.Settings.DegradedLatencyMs == 0);
+        Check("load: a NaN per-target threshold inherits rather than sticking as NaN",
+            loaded.Targets[0].DegradedLossPercent is null);
+    }
+
+    /// <summary>Names containing brackets survive a save and reload unchanged.</summary>
+    private static void BracketedNamesRoundTrip(string dir)
+    {
+        var path = Path.Combine(dir, "brackets.ini");
+        ConfigStore.Save(path, new Settings(),
+        [
+            new TargetConfig { Name = "web [prod]", Address = "10.0.0.1", Tab = "Ops [EU]" },
+            new TargetConfig { Name = "plain", Address = "10.0.0.2" },
+        ], tabs: [new TabConfig { Name = "Ops [EU]" }, new TabConfig()]);
+
+        var loaded = ConfigStore.Load(path);
+        Check("ini: a target name with brackets is not truncated", loaded.Targets.Any(t => t.Name == "web [prod]"));
+        Check("ini: a tab name with brackets is not truncated", loaded.Tabs.Any(t => t.Name == "Ops [EU]"));
+        Check("ini: the target still belongs to its bracketed tab",
+            loaded.Targets.First(t => t.Name == "web [prod]").Tab == "Ops [EU]");
+    }
+
+    /// <summary>
+    /// Reading a GitHub release, and explaining a refusal in words that say what to do.
+    /// </summary>
+    private static void UpdateReleaseParsing()
+    {
+        Check("update: an absurdly long tag component yields null, not an exception",
+            UpdateCheck.ParseVersion("v99999999999.0.0") is null);
+
+        // An author block with its own html_url comes first, as it can in GitHub's output: the
+        // release's own page must still be the one reported.
+        const string json = """
+            {
+              "author": { "login": "x", "html_url": "https://github.com/x" },
+              "html_url": "https://github.com/hkrob/PingBoard/releases/tag/v9.1.0",
+              "tag_name": "v9.1.0",
+              "body": "notes with \"quotes\" and a fake \"browser_download_url\": \"https://evil.example/x.exe\"",
+              "assets": [
+                { "name": "src.zip", "browser_download_url": "https://github.com/hkrob/PingBoard/releases/download/v9.1.0/src.zip" },
+                { "name": "setup.exe", "browser_download_url": "https://github.com/hkrob/PingBoard/releases/download/v9.1.0/PingBoard-9.1.0-setup.exe",
+                  "digest": "sha256:606D0505E7ABCA97A29151F5D0977B24418751C062C000865FDEC013E42D7173" }
+              ]
+            }
+            """;
+
+        var info = UpdateCheck.ParseRelease(json, new Version(1, 11, 15));
+        Check("update: a newer release is offered", info is { Available: true, Error: null });
+        Check("update: the release page is the release's, not the author's",
+            info.ReleaseUrl.EndsWith("/releases/tag/v9.1.0", StringComparison.Ordinal));
+        Check("update: the installer is picked from the assets, not from the release notes",
+            info.DownloadUrl.EndsWith("PingBoard-9.1.0-setup.exe", StringComparison.Ordinal));
+        Check("update: the asset digest is carried, lower-cased",
+            info.DownloadSha256 == "606d0505e7abca97a29151f5d0977b24418751c062c000865fdec013e42d7173");
+
+        var noDigest = UpdateCheck.ParseRelease(
+            """{"tag_name":"v1.0.0","assets":[{"browser_download_url":"https://github.com/a/b/c.exe"}]}""",
+            new Version(1, 0, 0));
+        Check("update: a release without a digest parses with an empty one",
+            noDigest is { Available: false, DownloadSha256: "" } && noDigest.DownloadUrl.EndsWith(".exe", StringComparison.Ordinal));
+
+        Check("update: an unreadable response is an error, not an exception",
+            UpdateCheck.ParseRelease("<html>rate limited</html>", new Version(1, 0, 0)).Error is not null);
+
+        using var limited = new System.Net.Http.HttpResponseMessage(System.Net.HttpStatusCode.Forbidden)
+        {
+            ReasonPhrase = "rate limit exceeded",
+        };
+        limited.Headers.TryAddWithoutValidation("x-ratelimit-remaining", "0");
+        limited.Headers.TryAddWithoutValidation("x-ratelimit-reset",
+            DateTimeOffset.UtcNow.AddMinutes(30).ToUnixTimeSeconds().ToString(System.Globalization.CultureInfo.InvariantCulture));
+
+        var message = UpdateCheck.DescribeFailure(limited);
+        Check("update: a rate limit is explained, with when to retry",
+            message.Contains("hourly limit", StringComparison.Ordinal) && message.Contains("try again after", StringComparison.Ordinal));
+
+        using var forbidden = new System.Net.Http.HttpResponseMessage(System.Net.HttpStatusCode.Forbidden) { ReasonPhrase = "Forbidden" };
+        Check("update: a 403 that is not a rate limit is reported as it is",
+            UpdateCheck.DescribeFailure(forbidden) == "GitHub returned 403 Forbidden");
     }
 
     // ------------------------------------------------------------ export

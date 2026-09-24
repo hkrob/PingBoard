@@ -256,6 +256,47 @@ public sealed class TransitionJournal
         return closed;
     }
 
+    /// <summary>
+    /// Ends every outage still open for <paramref name="target"/>, because the board has stopped
+    /// watching it — removed, paused, renamed, or its tab switched off.
+    /// <para>
+    /// Without this such an outage can never close: no probe will ever record the recovery, so the
+    /// outage log showed it as "ongoing" for as long as the journal kept it, its duration growing
+    /// on a host nobody was monitoring any more. The closing entry is journal-only — it is not an
+    /// alert and not a line in the events CSV, because nothing actually recovered; the log simply
+    /// records the outage as lasting until monitoring stopped.
+    /// </para>
+    /// </summary>
+    /// <returns>The closing entries added, so the caller can persist them alongside the rest.</returns>
+    public IReadOnlyList<StateTransition> CloseOpen(string target, DateTimeOffset when)
+    {
+        lock (_gate)
+        {
+            var closing = new List<StateTransition>();
+
+            foreach (var (key, open) in _open)
+            {
+                if (!string.Equals(key.Target, target, StringComparison.OrdinalIgnoreCase)) continue;
+
+                var lasted = when > open.When ? when - open.When : TimeSpan.Zero;
+                closing.Add(new StateTransition(
+                    open.TargetName, Up: true, when, lasted, TargetStatus.Paused, open.Threshold, key.Kind));
+            }
+
+            // Added after the scan, not during it: Add removes from _open, and that dictionary is
+            // what is being enumerated.
+            foreach (var t in closing)
+            {
+                _items[_next] = t;
+                _next = (_next + 1) % Capacity;
+                if (_count < Capacity) _count++;
+                TrackOpenLocked(t);
+            }
+
+            return closing;
+        }
+    }
+
     public void Clear()
     {
         lock (_gate)

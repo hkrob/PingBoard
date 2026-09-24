@@ -12,8 +12,12 @@ namespace PingBoard.App;
 /// Windows 2000 and cannot be broken by an SDK bump.
 /// </para>
 /// <para>
-/// The callback target is a dedicated message-only window rather than the main window's HWND, so
-/// nothing here touches WinUI's own window procedure.
+/// The callback target is a dedicated hidden window rather than the main window's HWND, so nothing
+/// here touches WinUI's own window procedure. It is a never-shown top-level window rather than a
+/// message-only one on purpose: when Explorer restarts, every tray icon is gone and the shell
+/// broadcasts <c>TaskbarCreated</c> so owners can put theirs back — and message-only windows do not
+/// receive broadcasts. Without it an Explorer crash left PingBoard running with no icon, and a board
+/// hidden in the tray could then only be reached by launching it a second time.
 /// </para>
 /// </summary>
 public sealed partial class TrayIcon : IDisposable
@@ -35,7 +39,10 @@ public sealed partial class TrayIcon : IDisposable
 
     private const int IdShow = 1, IdExit = 2;
 
-    private static readonly IntPtr HWND_MESSAGE = new(-3);
+    private const uint WS_EX_TOOLWINDOW = 0x00000080;
+
+    /// <summary>Broadcast by the shell whenever the taskbar is (re)created.</summary>
+    private static readonly uint WM_TASKBARCREATED = RegisterWindowMessage("TaskbarCreated");
 
     private readonly MainWindow _window;
     private readonly WndProc _wndProc;          // held so the delegate is not collected
@@ -44,6 +51,9 @@ public sealed partial class TrayIcon : IDisposable
     private IntPtr _hIcon;
     private bool _added;
     private bool _disposed;
+
+    /// <summary>Last tooltip set, so a re-added icon comes back saying what it said before.</summary>
+    private string _tooltip = "PingBoard";
 
     public TrayIcon(MainWindow window)
     {
@@ -80,8 +90,9 @@ public sealed partial class TrayIcon : IDisposable
             if (error != 1410) throw new InvalidOperationException($"RegisterClassEx failed ({error})");
         }
 
-        _hwnd = CreateWindowEx(0, _className, "PingBoardTray", 0, 0, 0, 0, 0,
-                               HWND_MESSAGE, IntPtr.Zero, GetModuleHandle(null), IntPtr.Zero);
+        // No WS_VISIBLE, so never shown; WS_EX_TOOLWINDOW keeps it out of Alt+Tab regardless.
+        _hwnd = CreateWindowEx(WS_EX_TOOLWINDOW, _className, "PingBoardTray", 0, 0, 0, 0, 0,
+                               IntPtr.Zero, IntPtr.Zero, GetModuleHandle(null), IntPtr.Zero);
 
         if (_hwnd == IntPtr.Zero)
             throw new InvalidOperationException($"CreateWindowEx failed ({Marshal.GetLastWin32Error()})");
@@ -107,7 +118,7 @@ public sealed partial class TrayIcon : IDisposable
         data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
         data.uCallbackMessage = TrayCallback;
         data.hIcon = _hIcon;
-        data.szTip = "PingBoard";
+        data.szTip = _tooltip;
 
         _added = Shell_NotifyIcon(NIM_ADD, ref data);
     }
@@ -129,12 +140,19 @@ public sealed partial class TrayIcon : IDisposable
     /// <summary>Updates the hover tooltip — used to show the current up/down tally.</summary>
     public void SetTooltip(string text)
     {
+        // The tip field is a fixed 128-char buffer; over-long text is silently dropped by the shell.
+        var tip = text.Length > 127 ? text[..127] : text;
+
+        // Skipped when unchanged: every call is a synchronous cross-process message to Explorer,
+        // made on the UI thread.
+        if (tip == _tooltip) return;
+        _tooltip = tip;
+
         if (!_added || _disposed) return;
 
         var data = NewData();
         data.uFlags = NIF_TIP;
-        // The tip field is a fixed 128-char buffer; over-long text is silently dropped by the shell.
-        data.szTip = text.Length > 127 ? text[..127] : text;
+        data.szTip = tip;
         Shell_NotifyIcon(NIM_MODIFY, ref data);
     }
 
@@ -169,13 +187,27 @@ public sealed partial class TrayIcon : IDisposable
         Shell_NotifyIcon(NIM_MODIFY, ref data);
     }
 
+    // A single click reopens it (WM_LBUTTONUP below), so that is what the hint says.
     public void ShowHiddenHint() =>
-        SetTooltip("PingBoard — still monitoring. Double-click to reopen.");
+        SetTooltip("PingBoard — still monitoring. Click to reopen.");
 
     private IntPtr HandleMessage(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
     {
         try
         {
+            if (msg == WM_TASKBARCREATED && WM_TASKBARCREATED != 0)
+            {
+                // Explorer restarted, or the taskbar came up after we did — either way our icon is
+                // not there. Also covers a login where autostart beat the shell to it.
+                if (!_disposed)
+                {
+                    _added = false;
+                    AddIcon();
+                }
+
+                return IntPtr.Zero;
+            }
+
             switch (msg)
             {
                 case TrayCallback:
@@ -322,6 +354,9 @@ public sealed partial class TrayIcon : IDisposable
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern ushort RegisterClassEx(ref WNDCLASSEX wc);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern uint RegisterWindowMessage(string message);
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     [return: MarshalAs(UnmanagedType.Bool)]

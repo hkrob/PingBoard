@@ -132,9 +132,13 @@ public sealed class Settings
         TraceHopTimeoutMs = Math.Clamp(TraceHopTimeoutMs, 100, 10_000);
 
         // Zero stays zero — it is the "off" switch, not a small threshold — so clamp only the
-        // range above it.
-        if (DegradedLatencyMs != 0) DegradedLatencyMs = Math.Clamp(DegradedLatencyMs, 1, 600_000);
-        if (DegradedLossPercent != 0) DegradedLossPercent = Math.Clamp(DegradedLossPercent, 0.1, 100);
+        // range above it. Anything at or below zero (or not a number at all) means off too: a
+        // hand-edited -1 used to be clamped *up* to a 1 ms / 0.1 % threshold, turning every
+        // target on the board amber.
+        DegradedLatencyMs = DegradedLatencyMs <= 0 ? 0 : Math.Min(DegradedLatencyMs, 600_000);
+        DegradedLossPercent = !double.IsFinite(DegradedLossPercent) || DegradedLossPercent <= 0
+            ? 0
+            : Math.Clamp(DegradedLossPercent, 0.1, 100);
         DegradedSamples = Math.Clamp(DegradedSamples, 3, 1000);
         CertCheckHours = Math.Clamp(CertCheckHours, 1, 720);
         CertWarnDays = Math.Clamp(CertWarnDays, 1, 365);

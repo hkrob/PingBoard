@@ -93,7 +93,14 @@ public sealed partial class TargetRow : ObservableObject
     /// repaints the row. Used by the Matrix theme, where the key stays the same but the brush it
     /// names is now a different object.
     /// </summary>
-    public void RefreshStatusBrush() => OnPropertyChanged(nameof(ThemeKey));
+    public void RefreshStatusBrush()
+    {
+        OnPropertyChanged(nameof(ThemeKey));
+
+        // The sparkline and graph resolve their brushes while drawing, and now only redraw when a
+        // sample lands — so a palette swap has to ask for one explicitly.
+        HistoryVersion++;
+    }
     [ObservableProperty] public partial double RowOpacity { get; private set; } = 1.0;
 
     // ------------------------------------------------------------------ failure trace
@@ -131,7 +138,7 @@ public sealed partial class TargetRow : ObservableObject
         TraceSectionVisibility = Visibility.Visible;
         DetailVisibility = Visibility.Visible;
         DetailGlyph = ChevronDown;
-        TraceCaption = "Tracing�";
+        TraceCaption = "Tracing…";
         TraceSummary = "";
         TraceHops.Clear();
 
@@ -199,6 +206,14 @@ public sealed partial class TargetRow : ObservableObject
 
     /// <summary>Bumped whenever history changes, so the sparkline knows to redraw.</summary>
     [ObservableProperty] public partial int HistoryVersion { get; private set; }
+
+    /// <summary>
+    /// Probes recorded as of the last refresh, so <see cref="HistoryVersion"/> moves only when there
+    /// is a new sample to draw. It used to be bumped on every 4 Hz tick, which re-copied and
+    /// re-laid-out every row's sparkline and latency graph — including the graphs inside collapsed
+    /// rows — four times a second, for data that changes once per probe interval.
+    /// </summary>
+    private long _lastSampleCount = -1;
 
     /// <summary>Latest snapshot, used for sorting and for the sparkline's data pull.</summary>
     public TargetSnapshot Snapshot { get; private set; }
@@ -319,7 +334,14 @@ public sealed partial class TargetRow : ObservableObject
         // "a router actively told us it could not deliver".
         StatusTooltip = BuildTooltip(s, timeoutMs);
 
-        HistoryVersion++;
+        // A reset drops the count, so inequality rather than "greater than" catches it too.
+        var samples = s.OkCount + s.NokCount;
+        if (samples != _lastSampleCount)
+        {
+            _lastSampleCount = samples;
+            HistoryVersion++;
+        }
+
         OnPropertyChanged(nameof(DownBadge));
     }
 

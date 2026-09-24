@@ -318,8 +318,13 @@ public static class ConfigStore
     private static int? ClampOrNull(int? value, int min, int max) =>
         value is { } v ? Math.Clamp(v, min, max) : null;
 
+    /// <summary>
+    /// As above; a non-finite value is dropped back to "inherit". double.TryParse accepts "NaN" and
+    /// "Infinity", and Math.Clamp passes NaN straight through, so without this a typo'd threshold
+    /// would be neither on nor off and would be written back to the file as NaN forever.
+    /// </summary>
     private static double? ClampOrNull(double? value, double min, double max) =>
-        value is { } v ? Math.Clamp(v, min, max) : null;
+        value is { } v && double.IsFinite(v) ? Math.Clamp(v, min, max) : null;
 
     /// <summary>
     /// Splits a comma-separated list value — used for a target's own tags, a tab's selected-tags

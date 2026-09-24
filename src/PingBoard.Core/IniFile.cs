@@ -49,7 +49,10 @@ public sealed class IniFile
 
             if (line[0] == '[')
             {
-                var close = line.IndexOf(']');
+                // The last ']' rather than the first: section names embed user-chosen target and
+                // tab names, and "web [prod]" written as [Target:web [prod]] must not read back as
+                // "web [prod" — the target would be silently renamed and its history orphaned.
+                var close = line.LastIndexOf(']');
                 if (close <= 1) continue;
                 current = ini.GetOrAdd(line[1..close].Trim());
                 continue;

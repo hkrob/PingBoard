@@ -227,11 +227,9 @@ public sealed partial class BoardView : UserControl
             var file = await picker.PickSaveFileAsync();
             if (file is null) return;
 
-            // Carry the counters across too, so "save as" preserves history rather than silently
-            // resetting every target to zero.
-            ConfigStore.Save(file.Path, Vm.Settings, Vm.Rows.Select(r => r.Target.Config));
-            StateStore.Save(ConfigStore.StatePathFor(file.Path), Vm.Rows.Select(r => r.Target));
-            await Vm.LoadAsync(file.Path);
+            // The whole board, counters and outage log included — see SaveConfigAsAsync for what
+            // writing only settings and targets here used to lose.
+            await Vm.SaveConfigAsAsync(file.Path);
             UpdateSortIndicator();
         }
         catch (Exception ex)

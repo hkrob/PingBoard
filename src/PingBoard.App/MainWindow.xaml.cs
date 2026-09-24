@@ -106,11 +106,19 @@ public sealed partial class MainWindow : Window
         Closed += OnClosed;
         AppWindow.Closing += OnAppWindowClosing;
 
+        // AppWindow.Changed covers minimise and restore; these two cover the first Activate and
+        // any show/hide that does not pass through it. A board wrongly believed hidden would stop
+        // updating on screen, so every route in is watched.
+        VisibilityChanged += (_, _) => SyncBoardVisibility();
+        Activated += (_, _) => SyncBoardVisibility();
+
         // Minimising and restoring never passes through BringToFront, which only the tray uses,
         // so the presenter state is watched directly. Changed fires for moves and resizes too;
         // ReportWhileAway is a no-op unless the window was actually put away.
         AppWindow.Changed += (sender, _) =>
         {
+            SyncBoardVisibility();
+
             if (sender.Presenter is not OverlappedPresenter presenter) return;
 
             if (presenter.State == OverlappedPresenterState.Minimized) _awaySince ??= DateTimeOffset.Now;
@@ -132,7 +140,12 @@ public sealed partial class MainWindow : Window
 
             // First run: seed a config so the board is immediately useful and the file the user is
             // meant to hand-edit actually exists.
-            if (!File.Exists(path))
+            //
+            // Only when there is no .bak either. A missing config with its backup still beside it
+            // is not a first run — it is exactly what the resilient loader exists to recover from,
+            // and seeding here used to pre-empt that: the three sample hosts were written in its
+            // place, and the next save copied them over the .bak, destroying the user's real board.
+            if (!File.Exists(path) && !File.Exists(path + ".bak"))
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(path)!);
                 ConfigStore.Save(path, new Settings(), SeedTargets());
@@ -168,15 +181,48 @@ public sealed partial class MainWindow : Window
         {
             CrashLog.Write(ex);
             Vm.ShowBanner($"Startup problem: {ex.Message} — logged to {CrashLog.Path}");
+
+            // The tray icon is normally created above, after the load. If the load is what threw,
+            // an autostart launch — window hidden, waiting for the tray — would be left running with
+            // neither, reachable only through Task Manager, and monitoring nothing. A failed start
+            // is something the user has to see, so it gets the window regardless of --minimized.
+            try { _tray ??= new TrayIcon(this); }
+            catch (Exception trayError) { CrashLog.Write(trayError); }
+
+            BringToFront();
         }
     }
 
-    private static IEnumerable<TargetConfig> SeedTargets() =>
-    [
-        new() { Name = "loopback", Address = "127.0.0.1" },
-        new() { Name = "gateway", Address = "10.1.10.1" },
-        new() { Name = "cloudflare-dns", Address = "1.1.1.1" },
-    ];
+    /// <summary>
+    /// The first-run board: this machine's own default gateway, found rather than assumed, and two
+    /// public resolvers — the smallest set that tells a local fault from an internet one.
+    /// <para>
+    /// The gateway used to be a fixed private address, which was only ever right for the network
+    /// it was written on; everywhere else it was a permanently red row on a brand-new install.
+    /// A machine with no gateway (offline, or unusual routing) simply gets no gateway row.
+    /// </para>
+    /// </summary>
+    private static List<TargetConfig> SeedTargets()
+    {
+        var seed = new List<TargetConfig>();
+
+        try
+        {
+            var gateway = HostCatalog.DetectLocalNetwork()
+                .FirstOrDefault(e => e.Name.StartsWith("gateway", StringComparison.Ordinal));
+
+            if (gateway.Address is { Length: > 0 } address)
+                seed.Add(new TargetConfig { Name = "gateway", Address = address });
+        }
+        catch (System.Net.NetworkInformation.NetworkInformationException ex)
+        {
+            CrashLog.Write(ex);
+        }
+
+        seed.Add(new TargetConfig { Name = "cloudflare-dns", Address = "1.1.1.1" });
+        seed.Add(new TargetConfig { Name = "google-dns", Address = "8.8.8.8" });
+        return seed;
+    }
 
     /// <summary>
     /// Applies the theme to the window's content root.
@@ -346,10 +392,20 @@ public sealed partial class MainWindow : Window
         SavePlacement();
         Vm.SaveCounters();
         AppWindow.Hide();
+        SyncBoardVisibility();
         _tray.ShowHiddenHint();
 
         _awaySince = DateTimeOffset.Now;
     }
+
+    /// <summary>
+    /// Tells the view model whether anyone can see the board, so it can stop redrawing one that is
+    /// in the tray or minimised. Called on every placement change and at each explicit hide/show,
+    /// rather than trusting any single event to cover all of them.
+    /// </summary>
+    private void SyncBoardVisibility() =>
+        Vm.SetBoardVisible(AppWindow.IsVisible
+            && AppWindow.Presenter is not OverlappedPresenter { State: OverlappedPresenterState.Minimized });
 
     /// <summary>Exits for real, bypassing hide-to-tray. Called from the tray menu.</summary>
     public void ExitApplication()
@@ -383,6 +439,7 @@ public sealed partial class MainWindow : Window
     public void StartHidden()
     {
         AppWindow.Hide();
+        SyncBoardVisibility();
         _awaySince = DateTimeOffset.Now;
     }
 
@@ -432,6 +489,7 @@ public sealed partial class MainWindow : Window
             presenter.Restore();
 
         Activate();
+        SyncBoardVisibility();
         ReportWhileAway();
     }
 

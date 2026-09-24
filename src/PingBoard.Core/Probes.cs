@@ -184,15 +184,40 @@ public sealed class TcpProbe : IProbe
 /// </para>
 /// <para>
 /// Three deliberate choices. <b>Redirects are not followed:</b> a 301 is a real answer about this
-/// URL, and following it silently measures a different endpoint than the one configured. <b>The
-/// response body is never read:</b> only the headers are needed, so a target serving a large file
-/// costs nothing. <b>A non-success status is its own failure kind</b> rather than a timeout,
-/// because everything below the application layer worked and reporting it as a network fault
-/// sends you to look in the wrong place.
+/// URL, and following it silently measures a different endpoint than the one configured. <b>No
+/// response body is transferred</b> — see below. <b>A non-success status is its own failure
+/// kind</b> rather than a timeout, because everything below the application layer worked and
+/// reporting it as a network fault sends you to look in the wrong place.
+/// </para>
+/// <para>
+/// <b>HEAD, confirmed by GET.</b> This used to send a GET and simply not read the body, on the
+/// belief that an unread body costs nothing. It does not work that way: to return a pooled
+/// connection, <see cref="SocketsHttpHandler"/> <em>drains</em> an unread body (up to 1 MiB by
+/// default) when the response is disposed — and with no <c>Accept-Encoding</c> sent, sites serve it
+/// uncompressed. A board of thirty well-known sites at the default two-second interval was measured
+/// pulling 4.3 MB/s, around 34 Mbit/s, around the clock, and burning most of a tenth of a core on
+/// it. A monitor that loads the link it is watching distorts the very thing it measures.
+/// </para>
+/// <para>
+/// So each probe asks with HEAD, which carries no body at all. HEAD was originally avoided because
+/// some servers answer it with 405 (or another refusal) while serving GET perfectly — reporting a
+/// healthy site as down, the worst kind of monitoring error. That is handled rather than avoided:
+/// any HEAD answer that would count as a failure is <em>confirmed with a GET</em> before it is
+/// reported, and a target whose GET succeeds where its HEAD did not is switched to GET for the rest
+/// of this probe's life. Those GETs ask for a compressed body and the handler drains at most 64 KB of
+/// it, so even the fallback cannot pull megabytes per probe.
 /// </para>
 /// </summary>
 public sealed class HttpProbe(bool useTls) : IProbe
 {
+    /// <summary>
+    /// Set once this target has answered a HEAD differently from a GET. Per instance, and so per
+    /// target: one site's quirk must not cost every other site its cheap probe.
+    /// </summary>
+    private volatile bool _headUnreliable;
+
+    /// <summary>True once this target has been switched to GET. Exposed for the self-test.</summary>
+    public bool UsesGet => _headUnreliable;
     /// <summary>
     /// Shared across every HTTP target. One handler pools connections; a client per probe would
     /// open a fresh TCP connection — and a fresh TLS handshake — on every single request, which
@@ -216,6 +241,14 @@ public sealed class HttpProbe(bool useTls) : IProbe
         {
             AllowAutoRedirect = false,
             PooledConnectionLifetime = TimeSpan.FromMinutes(2),
+
+            // The ceiling on what the GET fallback can cost: a body larger than this closes the
+            // connection instead of being read to the end. The next probe then pays a handshake,
+            // which is a few kilobytes against the megabyte this defaults to.
+            MaxResponseDrainSize = 64 * 1024,
+
+            // Deliberately none: the body is never read, so there is nothing to decompress.
+            AutomaticDecompression = DecompressionMethods.None,
         })
         {
             // Per-request cancellation supplies the real timeout; this only stops a stuck request
@@ -224,6 +257,10 @@ public sealed class HttpProbe(bool useTls) : IProbe
         };
 
         client.DefaultRequestHeaders.UserAgent.ParseAdd(UserAgent);
+
+        // Only matters for the GET fallback, whose body the handler may drain: compressed, a
+        // typical home page is a fifth to a tenth of its size.
+        client.DefaultRequestHeaders.AcceptEncoding.ParseAdd("gzip, deflate, br");
         return client;
     }
 
@@ -248,31 +285,25 @@ public sealed class HttpProbe(bool useTls) : IProbe
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeout.CancelAfter(options.TimeoutMs);
 
-        var start = Stopwatch.GetTimestamp();
-
         try
         {
             var uri = BuildUri(address, options);
 
-            // HEAD first would be cheaper, but plenty of servers answer it with 405 while serving
-            // GET perfectly well, which would report a healthy site as broken.
-            using var request = new HttpRequestMessage(HttpMethod.Get, uri);
+            if (!_headUnreliable)
+            {
+                var head = await SendAsync(HttpMethod.Head, uri, timeout.Token).ConfigureAwait(false);
+                if (Accepts(head.Code, options)) return Ok(head.RttMs, address);
 
-            using var response = await Client
-                .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token)
-                .ConfigureAwait(false);
+                // Never report a failure on HEAD's word alone — see the class notes.
+                var confirm = await SendAsync(HttpMethod.Get, uri, timeout.Token).ConfigureAwait(false);
+                if (!Accepts(confirm.Code, options)) return HttpFailure(address);
 
-            var rtt = (int)Math.Round(Stopwatch.GetElapsedTime(start).TotalMilliseconds);
-            var code = (int)response.StatusCode;
+                _headUnreliable = true;
+                return Ok(confirm.RttMs, address);
+            }
 
-            var ok = options.ExpectStatus > 0
-                ? code == options.ExpectStatus
-                : code is >= 200 and < 400;
-
-            return ok
-                ? ProbeResult.Ok(rtt, address, Environment.TickCount64, DateTimeOffset.Now)
-                : ProbeResult.Fail(TargetStatus.HttpError, Environment.TickCount64, DateTimeOffset.Now,
-                                   IPStatus.Success, address);
+            var get = await SendAsync(HttpMethod.Get, uri, timeout.Token).ConfigureAwait(false);
+            return Accepts(get.Code, options) ? Ok(get.RttMs, address) : HttpFailure(address);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -304,6 +335,32 @@ public sealed class HttpProbe(bool useTls) : IProbe
                                     IPStatus.BadDestination, address);
         }
     }
+
+    /// <summary>
+    /// Sends one request and returns its status with the time to the response headers. Timed per
+    /// request, so a GET that confirms a refused HEAD reports its own round trip rather than both.
+    /// </summary>
+    private static async Task<(int Code, int RttMs)> SendAsync(HttpMethod method, Uri uri, CancellationToken ct)
+    {
+        var start = Stopwatch.GetTimestamp();
+
+        using var request = new HttpRequestMessage(method, uri);
+        using var response = await Client
+            .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct)
+            .ConfigureAwait(false);
+
+        return ((int)response.StatusCode, (int)Math.Round(Stopwatch.GetElapsedTime(start).TotalMilliseconds));
+    }
+
+    private static bool Accepts(int code, in ProbeOptions options) =>
+        options.ExpectStatus > 0 ? code == options.ExpectStatus : code is >= 200 and < 400;
+
+    private static ProbeResult Ok(int rttMs, IPAddress address) =>
+        ProbeResult.Ok(rttMs, address, Environment.TickCount64, DateTimeOffset.Now);
+
+    private static ProbeResult HttpFailure(IPAddress address) =>
+        ProbeResult.Fail(TargetStatus.HttpError, Environment.TickCount64, DateTimeOffset.Now,
+                         IPStatus.Success, address);
 
     /// <summary>
     /// Builds the request URL from the configured host, falling back to the resolved address when

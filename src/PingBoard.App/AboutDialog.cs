@@ -128,7 +128,8 @@ public static class AboutDialog
                 download.IsEnabled = false;
                 status.Text = "Downloading…";
 
-                var (path, error) = await UpdateInstaller.DownloadAsync(pending.DownloadUrl, CancellationToken.None);
+                var (path, error) = await UpdateInstaller.DownloadAsync(
+                    pending.DownloadUrl, pending.DownloadSha256, CancellationToken.None);
 
                 if (error is not null)
                 {

@@ -83,7 +83,12 @@ public sealed class ColumnFitter
     {
         _measure.Text = text;
         _measure.FontSize = fontSize;
+
+        // Null means the inherited default, which has to be restored explicitly: the one reused
+        // TextBlock otherwise keeps whatever face the previous call set, so every column measured
+        // after a numeric one was measured in Consolas while being drawn in Segoe UI.
         if (family is not null) _measure.FontFamily = family;
+        else _measure.ClearValue(TextBlock.FontFamilyProperty);
 
         _measure.Measure(Unbounded);
         return _measure.DesiredSize.Width;

@@ -133,7 +133,13 @@ public readonly record struct TargetSnapshot(
 public sealed class PingTarget : IDisposable
 {
     private readonly Lock _gate = new();
-    private readonly RingBuffer _history;
+
+    /// <summary>
+    /// Not readonly only so <see cref="ResizeHistory"/> can swap it. Readers outside the gate
+    /// (<see cref="RecentHistory"/>, <see cref="HistorySnapshot"/>) take the reference once and use
+    /// that buffer, which is internally locked, so a swap mid-read costs nothing but staleness.
+    /// </summary>
+    private RingBuffer _history;
     private IProbe _probe;
 
     // Set to 1 while a probe is outstanding. Guards against the failure mode where a dead host
@@ -239,6 +245,15 @@ public sealed class PingTarget : IDisposable
     public bool IsActive => Config.Enabled && TabEnabled;
 
     public bool IsInFlight => Volatile.Read(ref _inFlight) == 1;
+
+    /// <summary>
+    /// Current status alone, without building a whole <see cref="Snapshot"/> — for the tray-only
+    /// refresh, which needs the up/down tally and nothing else.
+    /// </summary>
+    public TargetStatus Status
+    {
+        get { lock (_gate) return _status; }
+    }
 
     private static IProbe CreateProbe(ProbeKind kind) => kind switch
     {
@@ -579,13 +594,30 @@ public sealed class PingTarget : IDisposable
         lock (_gate)
         {
             _status = status;
-            if (status is TargetStatus.Suspended or TargetStatus.Paused)
+
+            if (status == TargetStatus.Paused)
             {
                 _consecutiveFailures = 0;
                 _downSinceTick = null;
                 _downFired = false;
                 _degradedSinceTick = null;
                 _degradedFired = false;
+            }
+            else if (status == TargetStatus.Suspended)
+            {
+                // The streak is always cleared, so waking cannot trip the threshold on failures
+                // recorded before the sleep. An outage that had already been *announced* is kept
+                // open, though, along with when it started.
+                //
+                // Clearing it too — which is what this used to do — meant a host that was down
+                // when the lid closed and fine when it opened never got its recovery: no "back
+                // up" alert for a "down" the user had already been sent, and an outage-log entry
+                // left reading "ongoing" indefinitely. A host still down after the wake was
+                // announced a second time. Keeping the latch fixes both: the first reply after
+                // waking closes the outage, and a host still down stays quietly down.
+                _consecutiveFailures = 0;
+                if (!_downFired) _downSinceTick = null;
+                if (!_degradedFired) _degradedSinceTick = null;
             }
         }
     }
@@ -615,6 +647,7 @@ public sealed class PingTarget : IDisposable
         {
             var kindChanged = config.Probe != Config.Probe;
             var addressChanged = !string.Equals(config.Address, Config.Address, StringComparison.OrdinalIgnoreCase);
+            var portChanged = config.Port != Config.Port;
             Config = config;
             _maintenance = MaintenanceSchedule.Parse(config.Maintenance);
 
@@ -628,6 +661,20 @@ public sealed class PingTarget : IDisposable
             {
                 _resolved = null;
                 _reverseName = null;
+
+                // Describes the path to the old address, which is now a different machine.
+                _lastTrace = null;
+            }
+
+            // The certificate belongs to whatever answered on the old host and port. Kept, the
+            // tooltip and the expiry columns went on describing the previous server — and its
+            // warnings — for up to CertCheckHours, since the next read was already scheduled
+            // hours out. Clearing the due time makes the new endpoint get read on the next tick.
+            if (addressChanged || portChanged || kindChanged)
+            {
+                _certificate = null;
+                _certNextTick = null;
+                _certWarned = false;
             }
 
             if (!config.Enabled)
@@ -642,6 +689,24 @@ public sealed class PingTarget : IDisposable
             else if (_status == TargetStatus.Paused) _status = TargetStatus.Unknown;
         }
     }
+
+    /// <summary>
+    /// Changes how many samples are retained, keeping the newest. Without this the rolling-window
+    /// setting only took effect at the next restart, while the dialog accepted it without comment.
+    /// </summary>
+    public void ResizeHistory(int capacity)
+    {
+        lock (_gate)
+        {
+            if (capacity == _history.Capacity) return;
+
+            var resized = new RingBuffer(capacity);
+            resized.Restore(_history.Snapshot());
+            _history = resized;
+        }
+    }
+
+    public int HistoryCapacity => _history.Capacity;
 
     public ProbeResult[] RecentHistory(int n) => _history.Recent(n);
 
@@ -678,7 +743,10 @@ public sealed class PingTarget : IDisposable
             var hostname = isLiteral ? _reverseName ?? "" : Config.Address;
             if (ip.Length == 0 && isLiteral) ip = Config.Address;
 
-            var downFor = _downSinceTick is { } since
+            // Not while suspended: an announced outage is kept open across a sleep (see
+            // ForceStatus), but a "down for" figure ticking on while nothing is being probed would
+            // be a claim about a period nobody observed.
+            var downFor = _downSinceTick is { } since && _status != TargetStatus.Suspended
                 ? TimeSpan.FromMilliseconds(Environment.TickCount64 - since)
                 : (TimeSpan?)null;
 
