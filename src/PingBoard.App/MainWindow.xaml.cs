@@ -28,6 +28,19 @@ public sealed partial class MainWindow : Window
         Vm = new MainViewModel(DispatcherQueue);
         Vm.Transition += OnTransition;
 
+        // The board in use is remembered the moment it changes. It used to be written only by
+        // SavePlacement — on hide to tray or on Exit — so a board opened with "Open config" and
+        // then ended any other way (sign-out, shutdown, a crash, the installer closing the app for
+        // an update) was forgotten, and the next launch quietly went back to the previous board.
+        Vm.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName != nameof(MainViewModel.ConfigPath) || Vm.ConfigPath.Length == 0) return;
+            if (string.Equals(_uiState.LastConfigPath, Vm.ConfigPath, StringComparison.OrdinalIgnoreCase)) return;
+
+            _uiState.LastConfigPath = Vm.ConfigPath;
+            _uiState.Save();
+        };
+
         Title = "PingBoard";
 
         _board = new BoardView(Vm, WindowNative.GetWindowHandle(this));
