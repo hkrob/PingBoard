@@ -39,8 +39,9 @@ checks GitHub for new versions on startup and can update itself in place.
 The installer is unsigned, so SmartScreen will warn on first run: *More info* → *Run anyway*. That
 is a property of the certificate, not of the packaging; no installer format avoids it.
 
-Your targets, history and settings live in `%AppData%\PingBoard` and survive updates and
-uninstalls.
+The board you have open - its targets, tabs, history and settings - lives beside the `.ini` you
+opened, which by default is `%AppData%\PingBoard`. It survives updates and uninstalls; Setup never
+touches it. To move to a new machine, see [docs/MIGRATION.md](docs/MIGRATION.md).
 
 ---
 
@@ -93,7 +94,7 @@ structurally — it is a separate project — so the part that has to be correct
 stress-tested without XAML in the way.
 
 ```bash
-dotnet run --project src/PingBoard.Harness -- --selftest        # 391 assertions
+dotnet run --project src/PingBoard.Harness -- --selftest        # 446 assertions
 dotnet run --project src/PingBoard.Harness -- board.ini --seconds 300
 ```
 
