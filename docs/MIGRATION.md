@@ -6,7 +6,7 @@ Three different things are involved, and each moves a different way:
 |---|---|---|
 | The **app** | the installed program | reinstall from the latest release |
 | Your **board** | targets, tabs, sites, settings, history, outage log | copy a handful of files |
-| **This machine's** settings | window position, *Start with Windows*, the remembered board, alert passwords | redo them on the new machine |
+| **This machine's** settings | theme and columns, window position, *Start with Windows*, the remembered board, alert passwords | redo them on the new machine |
 
 Nothing about a board lives in the registry or is tied to the installer, which is what makes moving
 one a file copy rather than an export.
@@ -55,9 +55,13 @@ Copying only the `.ini` gives you the full board layout with zeroed statistics.
   alerting, ignore this.
 - **Start with Windows.** It is a per-user `HKCU\...\Run` value pointing at the installed
   executable. Turn it on again in the ⚙ menu.
-- **The remembered board and window layout.** They live in `ui-state.ini` under
-  `%AppData%\PingBoard` and are per machine. Do not copy it: it records window coordinates for the
-  old monitor layout.
+- **UI preferences — theme, zoom, column order and visibility (including per-tab choices), the
+  notification mute, window placement and the remembered board.** All of it lives in
+  `%AppData%\PingBoard\ui-state.ini` and is per machine. Re-choosing a theme and a column set takes
+  a minute, so the simplest route is not to copy it. **Do not copy it verbatim:** it records the
+  *old* machine's board path, and if that path does not exist the app creates the folder and seeds a
+  sample board there, then monitors it. If you do want your theme and columns, copy the file and
+  first delete the `LastConfigPath` and `Window*` lines.
 - **The installed app.** Install it fresh.
 
 ## 4. Procedure

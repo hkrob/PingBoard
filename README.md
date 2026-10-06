@@ -132,6 +132,24 @@ Address=nas.local
 Enabled=false              ; paused
 ```
 
+Every key, with its default and the range it is clamped to, is in the
+[configuration reference](docs/CONFIGURATION.md).
+
+Counters *and probe history* live in a sidecar (`board.state.ini`), so the file you edit stays free
+of churning numbers. Deleting the sidecar resets all statistics; there is a menu item for the same
+thing.
+
+History is persisted as compact `status:rtt` pairs, so the sparkline and the latency graph come
+back populated after a restart rather than spending the next five minutes filling in. Only status
+and round-trip time are kept, because only those are read back — the timestamps are dropped
+deliberately, since a monotonic tick from a process that has exited means nothing and both charts
+plot by index anyway.
+
+`Probe=tcp` exists because plenty of hosts and most corporate firewalls drop ICMP silently, which
+would otherwise read as a permanently dead target. A completed TCP handshake also proves more than
+an echo reply does, and a *refused* connection is reported separately from a timeout — it means the
+host is up and the port is closed.
+
 ### Well-known hosts
 
 ⚙ → **Add well-known hosts…** populates a board in one click. Each group lands in its own tab:
@@ -206,21 +224,6 @@ starts keeping its own set, independent of every other tab; until then it shares
 board already had. Column *order*, zoom and auto-fit stay a single setting across the whole board —
 those are about screen space, not about what a particular group of hosts needs shown.
 
-Counters *and probe history* live in a sidecar (`board.state.ini`), so the file you edit stays free
-of churning numbers. Deleting the sidecar resets all statistics; there is a menu item for the same
-thing.
-
-History is persisted as compact `status:rtt` pairs, so the sparkline and the latency graph come
-back populated after a restart rather than spending the next five minutes filling in. Only status
-and round-trip time are kept, because only those are read back — the timestamps are dropped
-deliberately, since a monotonic tick from a process that has exited means nothing and both charts
-plot by index anyway.
-
-`Probe=tcp` exists because plenty of hosts and most corporate firewalls drop ICMP silently, which
-would otherwise read as a permanently dead target. A completed TCP handshake also proves more than
-an echo reply does, and a *refused* connection is reported separately from a timeout — it means the
-host is up and the port is closed.
-
 ### Sites
 
 A physical location — `Connaught`, `Northcliffe` — kept deliberately separate from a tab. A tab is a
@@ -250,6 +253,36 @@ that was never asked is how a column ends up read as more certain than it is.
 Unlike a tab, a target with no site is a normal, common state rather than falling back to a default
 group — most targets are not tied to a physical location worth naming, and there is nothing for
 them to fall back to.
+
+### Tags and saved views
+
+Tags are free-form labels on a target — as many as you like, comma-separated in the target
+dialog's **Tags (optional)** box, which suggests tags already in use. A `Tags` column (hidden by
+default) shows them on the board.
+
+```ini
+[Target:core-switch]
+Address=192.0.2.1
+Tab=LAN
+Site=Main office
+Tags=core, switching
+```
+
+A target still belongs to exactly **one** tab, and that is what governs probing, muting and
+disabling. Tags and sites add what a tab cannot: a view *across* tabs. Right-click a tab and choose
+**Filter by tags…** or **Filter by site…**, and that tab stops being a plain membership group and
+becomes a **saved view** over the whole board — it shows every target carrying at least one of the
+chosen tags (or at one of the chosen sites), wherever that target's own `Tab=` points. Set both
+filters and a target must match both. **Clear filter** returns the tab to its own members.
+
+```ini
+[Tab:Core]
+SelectedTags=core
+SelectedSites=Main office
+```
+
+A filter changes what the tab *displays*, nothing else. A tag that no tab is watching for costs
+nothing and needs no cleanup.
 
 ### HTTP probes
 
@@ -652,8 +685,22 @@ changes.
 ```
 src/PingBoard.Core/      engine — no UI references, ever
 src/PingBoard.App/       WinUI 3 front end
-src/PingBoard.Harness/   headless driver and self-tests
+src/PingBoard.Harness/   headless driver and the self-test suite
+installer/               Inno Setup script
+tools/                   window capture and screenshot regeneration
+docs/                    reference documentation, the demo board and screenshots
 ```
+
+### Documentation
+
+| | |
+|---|---|
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | How it is put together: the source map, data flow, threading, and the invariants not to break |
+| [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Every config key, its default and its range |
+| [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Build, test, release, and how to check UI changes |
+| [docs/MIGRATION.md](docs/MIGRATION.md) | Moving a board or the source to another machine |
+| [docs/STATUS.md](docs/STATUS.md) | What is verified, what is not, known limits, and decisions already made |
+| [CLAUDE.md](CLAUDE.md) | The entry point for coding agents and new contributors |
 
 ## Not included
 

@@ -1,57 +1,71 @@
-# PingBoard — notes for contributors and coding agents
+# PingBoard — start here
 
-Read `README.md` first: it carries the design rationale and the WinUI 3 pitfalls. This file holds
-only what you need in order not to break things.
+PingBoard is an always-on ping monitor for Windows 11 (WinUI 3, .NET 10, unpackaged and
+self-contained). This file is the entry point for any coding assistant or person picking the
+project up cold; it is written so that nothing depends on a previous conversation. (It is called
+`CLAUDE.md` because Claude Code looks for that name; [`AGENTS.md`](AGENTS.md) points here for other
+tools.)
 
-## Layout, and the one hard rule
+## Read in this order
 
-- `src/PingBoard.Core` — the engine. **It references no UI type, ever.** That is enforced by it
-  being a separate project, and warnings are errors there.
-- `src/PingBoard.App` — the WinUI 3 front end (unpackaged, self-contained, .NET 10).
-- `src/PingBoard.Harness` — a headless driver and the self-test suite.
+1. [README.md](README.md) — what it does, and the design rationale behind it.
+2. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — the source map, the data flow, and **the
+   invariants you must not break**.
+3. [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) — build, test, release, and how to check UI changes
+   safely.
+4. [docs/CONFIGURATION.md](docs/CONFIGURATION.md) — every config key, default and range.
+5. [docs/STATUS.md](docs/STATUS.md) — what is **not** verified, known gaps, and decisions already
+   made.
+6. [docs/MIGRATION.md](docs/MIGRATION.md) — moving a board or the source to another machine.
 
 ## Commands
 
 ```bash
 dotnet build PingBoard.slnx -c Release                                  # must be 0 warnings
-dotnet run --project src/PingBoard.Harness -c Release -- --selftest     # 446 passing
+dotnet run --project src/PingBoard.Harness -c Release -- --selftest     # must be all passing
 dotnet run --project src/PingBoard.App
 ```
 
-CI (`.github/workflows/ci.yml`) runs the build and the self-test on `windows-latest`; keep it green.
-Publishing and building the installer are in the README. If `dotnet` is not found from an agent
-shell, it is installed in `C:\Program Files\dotnet` — prepend that to `PATH`.
+If `dotnet` is not found from an agent shell, it is in `C:\Program Files\dotnet` — prepend that to
+`PATH`. CI (`.github/workflows/ci.yml`) runs the first two on every push; keep it green.
 
-## Conventions that bite
+## The rules
 
+- **`src/PingBoard.Core` references no UI type, ever.** It is a separate project so this is a
+  compile-time fact; warnings are errors there.
+- **The UI reads immutable snapshots, never live engine state.**
+- **Sleep, a down network and a paused target are never recorded as a target failure.**
+- **Nothing unbounded on a probe path.** History is a fixed ring.
+- **Saves are atomic**, via `File.Move(overwrite: true)` — never `File.Replace`.
+- **This repository is public.** No real hostnames, internal addresses, credentials or personal
+  details in code, tests, docs, demo boards or screenshots. Use RFC 5737 addresses
+  (`192.0.2.0/24`) and `example.com` for fakes.
+- **Runtime files never go in git** (`*.state.ini`, `*.outages.csv`, `pingboard-events.csv*`, a
+  `config.ini` at the repo root). They are ignored on purpose.
 - **Line endings.** `.gitattributes` stores LF and checks out CRLF. Do not convert files by hand; a
   whole-file diff means something went wrong.
-- **Runtime files never go in git.** `*.state.ini`, `*.outages.csv`, `pingboard-events.csv*` and a
-  `config.ini` at the repo root are ignored on purpose. Real boards live in `%AppData%\PingBoard`
-  or wherever the user keeps them.
-- **This repository is public.** Do not add real hostnames, credentials or personal network
-  details to code, tests, docs or screenshots.
-- **The self-test count is quoted** in `README.md` and `docs/MIGRATION.md`. Update both when it
-  changes.
 
-## Releasing
+The full list, with the reason behind each, is in ARCHITECTURE.md.
 
-- The version lives in two places that must match: `<Version>` in
-  `src/PingBoard.App/PingBoard.App.csproj` and `AppVersion` in `installer/PingBoard.iss`.
-- A release is a `vX.Y.Z` tag on the commit plus a GitHub release with
-  `PingBoard-<version>-setup.exe` attached. The in-app updater reads `releases/latest`, downloads
-  that asset and verifies its SHA-256 against the digest GitHub publishes.
-- So **do not tag or release casually**: every installed copy will offer it as an update. Docs-only
-  changes do not need a version bump.
+## Definition of done
 
-## Checking UI changes without taking focus
+- `dotnet build PingBoard.slnx -c Release` has 0 warnings, and the self-tests all pass.
+- A behaviour change has a self-test for the failure it prevents.
+- The docs moved with the code: a new config key in `docs/CONFIGURATION.md`, a user-visible feature
+  in the README, a new file or invariant in `docs/ARCHITECTURE.md`, a changed limitation in
+  `docs/STATUS.md`. If the self-test count changed, update the places that quote it.
+- CI is green after the push.
+- Anything you could not verify is **said so**, in the commit and in `docs/STATUS.md` — not
+  described as working.
 
-Drive the running app with UI Automation rather than synthesised clicks, and capture it with
-`PrintWindow` using `PW_RENDERFULLCONTENT` (flag `2`). WinUI's composition surface can come back
-black when the window is occluded. Icon-only buttons need an explicit `AutomationProperties.Name` —
-glyph content yields no accessible name, and a tooltip does not supply one.
+## Hazards that have already bitten
 
-## Moving the project
-
-`docs/MIGRATION.md` covers moving a board and the source between machines. Clone outside any
-file-sync folder.
+- **Launching the app against a scratch board rewrites `%AppData%\PingBoard\ui-state.ini`**, which
+  the installed copy reads on its next start. Back it up and restore it, or use
+  `tools/retake-screenshots.ps1` as the model. Details: DEVELOPMENT.md → *The UI-state hazard*.
+- **Never stop a process you did not start.** An installed copy may be monitoring a real board.
+- **Screenshots are solid black on a locked desktop.** UI Automation still works; capture does not.
+- **Do not tag or release casually.** Every installed copy offers a release as an update. Docs-only
+  and tooling changes do not need one. The release procedure is in DEVELOPMENT.md.
+- **Do not trust a doc over the code.** Where they disagree, the code is right and the doc is a bug
+  to fix.
