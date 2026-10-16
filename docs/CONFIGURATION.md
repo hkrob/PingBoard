@@ -71,7 +71,7 @@ Global defaults. Every numeric probe setting can be overridden per target.
 | `LogPath` | `pingboard-events.csv` | | Transition CSV; relative paths resolve beside the `.ini` |
 | `OutageLogEnabled` | `true` | | Persist outages to `<board>.outages.csv` |
 | `DegradedLatencyMs` | `0` (off) | ≤ 0 → off; max 600 000 | Average RTT above which a still-replying target shows as degraded |
-| `DegradedLossPercent` | `0` (off) | ≤ 0 or non-numeric → off; otherwise 0.1 – 100 | Loss % above which a target shows as degraded |
+| `DegradedLossPercent` | `0` (off) | ≤ 0 or non-numeric → off; otherwise 0.1 – 100 (a per-target override is clamped 0 – 100 instead) | Loss % above which a target shows as degraded |
 | `DegradedSamples` | `20` | 3 – 1000 | Recent probes the degraded assessment averages over |
 | `CertCheckHours` | `6` | 1 – 720 | How often to re-read each HTTPS target's certificate |
 | `CertWarnDays` | `14` | 1 – 365 | Flag a certificate with fewer days than this left |

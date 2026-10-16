@@ -4,8 +4,8 @@ How PingBoard is put together, written for someone who has not seen the code bef
 particular decisions were made, the README's [Design notes](../README.md#design-notes) carry the
 long form; this page is the map.
 
-PingBoard is about 18 000 lines: an engine (`PingBoard.Core`, ~6 600), a WinUI 3 front end
-(`PingBoard.App`, ~8 300) and a headless driver with the self-test suite (`PingBoard.Harness`,
+PingBoard is about 17 000 lines: an engine (`PingBoard.Core`, ~6 600), a WinUI 3 front end
+(`PingBoard.App`, ~7 400) and a headless driver with the self-test suite (`PingBoard.Harness`,
 ~2 900).
 
 ---

@@ -149,7 +149,7 @@ finally {
             $ok = (Get-FileHash $dst).Hash -eq $backup[$f].Hash
             Write-Host ("Restored {0}: {1}" -f $f, $(if ($ok) { 'verified identical' } else { 'HASH MISMATCH - check it by hand' }))
         }
-        elseif (Test-Path $dst -and $f -eq 'ui-state.ini') {
+        elseif ((Test-Path $dst) -and $f -eq 'ui-state.ini') {
             # There was none before, so leaving the demo's seed behind would point a later launch at a deleted board.
             Remove-Item $dst -Force
             Write-Host "Removed the demo's ui-state.ini (none existed before)."

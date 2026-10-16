@@ -104,7 +104,8 @@ pwsh tools/retake-screenshots.ps1
 It launches the demo board, lets it build ~150 s of history, drives the UI to expand a row and
 switch theme, captures three images, and only then replaces the files in `docs/screenshots/`. It
 needs an unlocked desktop, and the demo window is visible on screen for a few minutes. The first
-two checks in the script (refusing when locked; restoring state after a failure) are tested; **a
+two checks in the script (refusing when locked; restoring state after a failure) have no
+automated test and no recorded manual run; **a
 fully successful capture run has not yet been confirmed** — see [STATUS.md](STATUS.md).
 
 Screenshots must stay free of anything real: the demo board's hosts only, and the title bar shows

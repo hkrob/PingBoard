@@ -27,7 +27,7 @@ dotnet run --project src/PingBoard.App
 ```
 
 If `dotnet` is not found from an agent shell, it is in `C:\Program Files\dotnet` — prepend that to
-`PATH`. CI (`.github/workflows/ci.yml`) runs the first two on every push; keep it green.
+`PATH`. CI (`.github/workflows/ci.yml`) runs the first two on every push to `main` and every pull request to `main`; keep it green.
 
 ## The rules
 

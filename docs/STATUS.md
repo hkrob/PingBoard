@@ -26,7 +26,7 @@ tray, autostart, and a self-updating per-user installer. Nothing in that list is
   version/release parsing.
 - **Suspend/resume logic** — that counters freeze, failure streaks clear, nothing is announced while
   suspended, an outage announced before sleep stays open, and a recovery is alerted on wake.
-- **Build and tests on every push**, on `windows-latest`, via CI.
+- **Build and tests on every push to `main` and every pull request to `main`**, on `windows-latest`, via CI.
 - **Memory.** An early soak (24 targets, ~48 probes/s, about 20 000 probes) held the managed heap
   flat at under 1 MB; the history rings are fixed-size by construction. It was measured on an early
   build — re-run the harness for a few minutes after any change to the engine's hot path.
@@ -49,7 +49,7 @@ These are believed to work and are not proven. Each has a way to settle it.
    This is the most important unverified claim: a monitor that cries wolf after every sleep gets
    ignored.
 2. **A fully successful run of `tools/retake-screenshots.ps1`.** Its refusal on a locked desktop and
-   its restore-after-failure path are tested; the successful capture path needs an unlocked desktop
+   its restore-after-failure path have **no automated test and no recorded manual run**; the successful capture path needs an unlocked desktop
    and has not yet been seen to complete.
 3. **A native ARM64 build.** The project pins `win-x64`; it should run under emulation on ARM64, but
    neither that nor a native build has been tried.

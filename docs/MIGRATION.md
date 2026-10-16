@@ -60,8 +60,10 @@ Copying only the `.ini` gives you the full board layout with zeroed statistics.
   `%AppData%\PingBoard\ui-state.ini` and is per machine. Re-choosing a theme and a column set takes
   a minute, so the simplest route is not to copy it. **Do not copy it verbatim:** it records the
   *old* machine's board path, and if that path does not exist the app creates the folder and seeds a
-  sample board there, then monitors it. If you do want your theme and columns, copy the file and
-  first delete the `LastConfigPath` and `Window*` lines.
+  sample board there, then monitors it (if it *does* exist, the app silently opens whatever board is
+  there). If you do want your theme and columns, copy the file and first delete the
+  `LastConfigPath`, `Window*` and `MuteUntil` lines (a copied `MuteUntil` keeps notifications muted
+  until the old time passes).
 - **The installed app.** Install it fresh.
 
 ## 4. Procedure
