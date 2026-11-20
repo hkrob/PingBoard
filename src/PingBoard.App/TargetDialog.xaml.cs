@@ -12,14 +12,21 @@ public sealed partial class TargetDialog : ContentDialog
     private readonly TargetRow? _editing;
     private bool _nameEditedByUser;
 
-    public TargetDialog(MainViewModel vm, TargetRow? editing)
+    /// <param name="template">
+    /// For <em>Duplicate</em>: a target to pre-fill a new one from. The result is added, not an
+    /// edit — <paramref name="editing"/> stays null — and the name is pre-set to an unused
+    /// "(copy)" one so Save works without the user having to invent a name first.
+    /// </param>
+    public TargetDialog(MainViewModel vm, TargetRow? editing, TargetConfig? template = null)
     {
         InitializeComponent();
 
         _vm = vm;
         _editing = editing;
 
-        Title = editing is null ? "Add target" : $"Edit {editing.Name}";
+        Title = editing is not null ? $"Edit {editing.Name}"
+              : template is not null ? $"Duplicate {template.Name}"
+              : "Add target";
 
         // Offer the tabs that already exist, but editable so a new one can be created here rather
         // than only by hand-editing the ini.
@@ -31,11 +38,12 @@ public sealed partial class TargetDialog : ContentDialog
         string tabText;
         var siteText = "";
 
-        if (editing is not null)
+        if ((editing?.Target.Config ?? template) is { } config)
         {
-            var config = editing.Target.Config;
             AddressBox.Text = config.Address;
-            NameBox.Text = config.Name;
+            NameBox.Text = editing is null
+                ? RowCommands.CopyName(config.Name, name => vm.NameExists(name))
+                : config.Name;
             ProbeBox.SelectedIndex = IndexFor(config.Probe);
             PortBox.Value = config.Port;
             EnabledSwitch.IsOn = config.Enabled;

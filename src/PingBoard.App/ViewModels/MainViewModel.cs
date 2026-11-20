@@ -1253,6 +1253,16 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         SaveConfig();
     }
 
+    /// <summary>
+    /// Pauses or resumes, rather than toggling, so a menu acting on a mixed selection leaves every
+    /// row in the state its label promised.
+    /// </summary>
+    public void SetPaused(TargetRow row, bool paused)
+    {
+        if (row.Target.Config.Enabled == !paused) return;
+        TogglePaused(row);
+    }
+
     public void TogglePaused(TargetRow row)
     {
         var config = row.Target.Config.Clone();

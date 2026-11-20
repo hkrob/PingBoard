@@ -30,6 +30,7 @@ internal static class SelfTest
             WhileYouWereAway();
             AvailabilityOverDays();
             LatencyOverDays(scratch);
+            RowMenuDecisions();
             RingBufferRolls();
             RingBufferIgnoresInactiveSamples();
             RingBufferTimeoutIsInvisibleToMinMax();
@@ -460,6 +461,42 @@ internal static class SelfTest
 
         target.Dispose();
         other.Dispose();
+    }
+
+    /// <summary>
+    /// The right-click menu's two decisions: which rows a command acts on, and the name a
+    /// duplicate gets.
+    /// </summary>
+    private static void RowMenuDecisions()
+    {
+        var a = new object();
+        var b = new object();
+        var c = new object();
+        IReadOnlyList<object> selection = [a, b];
+
+        Check("row menu: a right-click inside the selection acts on all of it",
+            RowCommands.TargetsFor(a, selection).Count == 2);
+        // The dangerous case: a right-click on one host must not remove others that happened to
+        // be highlighted.
+        Check("row menu: a right-click outside the selection acts on that row alone",
+            RowCommands.TargetsFor(c, selection) is [var only] && ReferenceEquals(only, c));
+        Check("row menu: with nothing selected it acts on the clicked row",
+            RowCommands.TargetsFor(c, []) is [var single] && ReferenceEquals(single, c));
+
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        Check("duplicate: the first copy is named '(copy)'", RowCommands.CopyName("gw", names.Contains) == "gw (copy)");
+
+        names.Add("gw (copy)");
+        Check("duplicate: a taken copy name is numbered", RowCommands.CopyName("gw", names.Contains) == "gw (copy 2)");
+
+        names.Add("gw (copy 2)");
+        Check("duplicate: numbering continues past taken names", RowCommands.CopyName("gw", names.Contains) == "gw (copy 3)");
+        Check("duplicate: copying a copy numbers from the original, not nesting",
+            RowCommands.CopyName("gw (copy)", names.Contains) == "gw (copy 3)");
+        Check("duplicate: names are compared case-insensitively, like the board does",
+            RowCommands.CopyName("GW", names.Contains) == "GW (copy 3)");
+        Check("duplicate: a name that is only a copy suffix keeps it rather than going blank",
+            RowCommands.CopyName("(copy)", names.Contains) == "(copy) (copy)");
     }
 
     /// <summary>

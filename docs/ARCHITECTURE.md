@@ -79,6 +79,7 @@ UI never reads live engine state: a 4 Hz timer pulls immutable snapshots into ro
 | | `IniFile.cs` | Hand-rolled INI parser/writer; `SaveAtomic` and `LoadResilient` |
 | | `TabConfig.cs`, `SiteConfig.cs` | Tab and site records |
 | Other | `HostCatalog.cs` | The "Add well-known hosts" lists |
+| | `RowCommands.cs` | The right-click menu's decisions: which rows a command acts on, and a duplicate's name |
 | | `Export.cs` | CSV export of what the board knows |
 | | `UpdateCheck.cs` | Asks GitHub for the latest release; version comparison |
 

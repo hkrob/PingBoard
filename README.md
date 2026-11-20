@@ -13,13 +13,23 @@ the ones that aren't. Lives in the tray and can start with Windows.
 
 ![The board](docs/screenshots/board-dark.png)
 
-A live board: healthy hosts, one target past its latency threshold, one that is not answering, and
-certificate expiry for the HTTPS targets. Every figure is real — this is eight public hosts probed
-for a few minutes, not a mock-up.
+A live board: healthy hosts, one target past its latency threshold, and one that is not
+answering. Every figure is real — this is eight public hosts probed for a few minutes, not a
+mock-up.
 
-Expanding a row opens its latency graph, and the failure trace if there is one:
+Right-click a row for the commands that act on it — edit, duplicate, pause, the graph, a path
+trace, copy, reset and remove:
 
-![The latency graph](docs/screenshots/board-detail.png)
+![The right-click menu](docs/screenshots/board-menu.png)
+
+Expanding a row opens its latency graph, and the failure trace if there is one. The graph can show
+the live window or the last 24 hours, 7 days or 30 days:
+
+![The latency graph over seven days](docs/screenshots/board-detail.png)
+
+*This one is illustrative.* A demo board cannot build a week of history in a few minutes, so the
+7-day graph and the 30-day availability column here come from a seeded history file; the live
+columns are real.
 
 There is also a terminal theme, for those who want one:
 
@@ -94,7 +104,7 @@ structurally — it is a separate project — so the part that has to be correct
 stress-tested without XAML in the way.
 
 ```bash
-dotnet run --project src/PingBoard.Harness -- --selftest        # 512 assertions
+dotnet run --project src/PingBoard.Harness -- --selftest        # 521 assertions
 dotnet run --project src/PingBoard.Harness -- board.ini --seconds 300
 ```
 
@@ -605,6 +615,16 @@ Two guards worth knowing: only down transitions trace, so a permanently dead hos
 rather than one per second; and at most two run at once, skipped rather than queued, because when an
 uplink drops every target crosses the threshold within seconds of the others and forty simultaneous
 traces would flood a network already in trouble.
+
+### The right-click menu
+
+Right-click any row for **Edit…** (F2), **Duplicate…**, **Pause**/**Resume**, **Show**/**Hide
+latency graph**, **Trace path now**, **Copy** (address, IP or hostname), **Reset statistics** and
+**Remove…** (Del). It follows Explorer's rule: right-click a row that is part of the selection and
+pause, graph, copy, reset and remove act on the whole selection (the labels say how many);
+right-click any other row and they act on that row alone, so a right-click on one host can never
+remove others that happened to be highlighted. Edit and Duplicate always act on the row clicked.
+Duplicate opens the target dialog pre-filled, named `<name> (copy)` — numbered if that is taken.
 
 ### The latency graph
 

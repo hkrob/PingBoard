@@ -111,37 +111,200 @@ public sealed partial class BoardView : UserControl
     {
         try
         {
-            if (Selected is not { } row) return;
-
-            var dialog = new TargetDialog(Vm, row) { XamlRoot = XamlRoot };
-            if (await dialog.ShowAsync() == ContentDialogResult.Primary && dialog.Result is { } config)
-                Vm.UpdateTarget(row, config);
+            if (Selected is { } row) await EditAsync(row);
         }
         catch (Exception ex) { CrashLog.Write(ex); }
+    }
+
+    private async Task EditAsync(TargetRow row)
+    {
+        var dialog = new TargetDialog(Vm, row) { XamlRoot = XamlRoot };
+        if (await dialog.ShowAsync() == ContentDialogResult.Primary && dialog.Result is { } config)
+            Vm.UpdateTarget(row, config);
     }
 
     private async void OnRemoveTarget(object sender, RoutedEventArgs e)
     {
         try
         {
-            var rows = SelectedRows;
-            if (rows.Count == 0) return;
-
-            var what = rows.Count == 1 ? $"“{rows[0].Name}”" : $"{rows.Count} targets";
-            var confirm = new ContentDialog
-            {
-                XamlRoot = XamlRoot,
-                Title = "Remove target",
-                Content = $"Remove {what}? Saved statistics for them will be lost.",
-                PrimaryButtonText = "Remove",
-                CloseButtonText = "Cancel",
-                DefaultButton = ContentDialogButton.Close,
-            };
-
-            if (await confirm.ShowAsync() != ContentDialogResult.Primary) return;
-            foreach (var row in rows) Vm.RemoveTarget(row);
+            await RemoveAsync(SelectedRows);
         }
         catch (Exception ex) { CrashLog.Write(ex); }
+    }
+
+    private async Task RemoveAsync(IReadOnlyList<TargetRow> rows)
+    {
+        if (rows.Count == 0) return;
+
+        var what = rows.Count == 1 ? $"“{rows[0].Name}”" : $"{rows.Count} targets";
+        var confirm = new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = "Remove target",
+            Content = $"Remove {what}? Saved statistics for them will be lost.",
+            PrimaryButtonText = "Remove",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Close,
+        };
+
+        if (await confirm.ShowAsync() != ContentDialogResult.Primary) return;
+        foreach (var row in rows.ToList()) Vm.RemoveTarget(row);
+    }
+
+    // ---------------------------------------------------------------- row menu
+
+    /// <summary>The row the open context menu belongs to, and the rows its commands act on.</summary>
+    private TargetRow? _menuRow;
+    private IReadOnlyList<TargetRow> _menuRows = [];
+
+    /// <summary>
+    /// Works out what the menu acts on and labels it to say so, before it is shown.
+    /// <para>
+    /// A right-click on a row outside the selection also selects that row, so the highlight shows
+    /// what the menu will act on — the same feedback Explorer gives.
+    /// </para>
+    /// </summary>
+    private void OnRowMenuOpening(object sender, object e)
+    {
+        if (sender is not MenuFlyout { Target: FrameworkElement { DataContext: TargetRow row } } menu) return;
+
+        _menuRow = row;
+        _menuRows = RowCommands.TargetsFor(row, SelectedRows);
+
+        if (_menuRows.Count == 1 && !BoardList.SelectedItems.Contains(row))
+        {
+            BoardList.SelectedItems.Clear();
+            BoardList.SelectedItem = row;
+        }
+
+        var many = _menuRows.Count > 1;
+        var count = _menuRows.Count;
+        var allPaused = _menuRows.All(r => !r.Target.Config.Enabled);
+
+        foreach (var item in Items(menu.Items))
+        {
+            switch (item.Tag as string)
+            {
+                case "pause":
+                    item.Text = (allPaused ? "Resume" : "Pause") + (many ? $" {count} targets" : "");
+                    item.Icon = new FontIcon { Glyph = allPaused ? "\uE768" : "\uE769" };
+                    break;
+                case "graph":
+                    item.Text = (row.IsDetailOpen ? "Hide latency graph" : "Show latency graph") + (many ? $" ({count})" : "");
+                    break;
+                case "reset":
+                    item.Text = many ? $"Reset statistics for {count} targets" : "Reset statistics";
+                    break;
+                case "remove":
+                    item.Text = many ? $"Remove {count} targets…" : "Remove…";
+                    break;
+                case "copy-ip":
+                    item.IsEnabled = _menuRows.Any(r => !string.IsNullOrEmpty(r.Ip));
+                    break;
+                case "copy-hostname":
+                    item.IsEnabled = _menuRows.Any(r => !string.IsNullOrEmpty(r.Hostname));
+                    break;
+            }
+        }
+
+        static IEnumerable<MenuFlyoutItem> Items(IList<MenuFlyoutItemBase> items)
+        {
+            foreach (var item in items)
+            {
+                if (item is MenuFlyoutItem plain) yield return plain;
+                else if (item is MenuFlyoutSubItem sub)
+                    foreach (var inner in Items(sub.Items)) yield return inner;
+            }
+        }
+    }
+
+    /// <summary>The menu's rows, falling back to the clicked item's own row if Opening did not run.</summary>
+    private IReadOnlyList<TargetRow> MenuRows(object sender) =>
+        _menuRows.Count > 0 ? _menuRows
+        : sender is FrameworkElement { DataContext: TargetRow row } ? [row]
+        : [];
+
+    private TargetRow? MenuRow(object sender) =>
+        _menuRow ?? (sender is FrameworkElement { DataContext: TargetRow row } ? row : null);
+
+    private async void OnRowEdit(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            if (MenuRow(sender) is { } row) await EditAsync(row);
+        }
+        catch (Exception ex) { CrashLog.Write(ex); }
+    }
+
+    private async void OnRowDuplicate(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            if (MenuRow(sender) is not { } row) return;
+
+            var dialog = new TargetDialog(Vm, null, row.Target.Config) { XamlRoot = XamlRoot };
+            if (await dialog.ShowAsync() == ContentDialogResult.Primary && dialog.Result is { } config)
+                Vm.AddTarget(config);
+        }
+        catch (Exception ex) { CrashLog.Write(ex); }
+    }
+
+    private void OnRowPause(object sender, RoutedEventArgs e)
+    {
+        var rows = MenuRows(sender);
+        var pause = !rows.All(r => !r.Target.Config.Enabled);
+        foreach (var row in rows.ToList()) Vm.SetPaused(row, pause);
+    }
+
+    private void OnRowGraph(object sender, RoutedEventArgs e)
+    {
+        if (MenuRow(sender) is not { } clicked) return;
+
+        var open = !clicked.IsDetailOpen;
+        foreach (var row in MenuRows(sender)) row.SetDetail(open);
+    }
+
+    private void OnRowReset(object sender, RoutedEventArgs e)
+    {
+        foreach (var row in MenuRows(sender)) Vm.ResetStats(row);
+    }
+
+    private async void OnRowRemove(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            await RemoveAsync(MenuRows(sender));
+        }
+        catch (Exception ex) { CrashLog.Write(ex); }
+    }
+
+    private void OnRowCopyAddress(object sender, RoutedEventArgs e) =>
+        CopyLines(MenuRows(sender).Select(r => r.Target.Config.Address));
+
+    private void OnRowCopyIp(object sender, RoutedEventArgs e) =>
+        CopyLines(MenuRows(sender).Select(r => r.Ip));
+
+    private void OnRowCopyHostname(object sender, RoutedEventArgs e) =>
+        CopyLines(MenuRows(sender).Select(r => r.Hostname));
+
+    /// <summary>One value per line, blanks dropped, so a multi-row copy pastes as a list.</summary>
+    private void CopyLines(IEnumerable<string> values)
+    {
+        try
+        {
+            var text = string.Join(Environment.NewLine, values.Where(v => !string.IsNullOrWhiteSpace(v)));
+            if (text.Length == 0) return;
+
+            var package = new Windows.ApplicationModel.DataTransfer.DataPackage();
+            package.SetText(text);
+            Windows.ApplicationModel.DataTransfer.Clipboard.SetContent(package);
+        }
+        catch (Exception ex)
+        {
+            // The clipboard can be held open by another process; that is not worth a crash.
+            CrashLog.Write(ex);
+            Vm.ShowBanner($"Could not copy — {ex.Message}");
+        }
     }
 
     private void OnTogglePause(object sender, RoutedEventArgs e)

@@ -87,11 +87,13 @@ These are believed to work and are not proven. Each has a way to settle it.
 
 ## Known gaps
 
-- **Screenshots** cover the board, the expanded latency graph (live view only, taken before the
-  24h/7d/30d selector existed) and the Matrix theme only. None shows
-  the tab strip, tag/site saved views, the settings or target dialogs, or the outage log, and the
-  existing three predate those features. `tools/retake-screenshots.ps1` regenerates them from
-  [`demo.ini`](demo.ini); extending it to more views is straightforward.
+- **Screenshots** cover the board, the right-click menu, the 7-day latency graph and the Matrix
+  theme. None shows the tab strip, tag/site saved views, the settings or target dialogs, or the
+  outage log. The current set was taken on a Windows 11 VM at 300% scale by a one-off UI
+  Automation driver; **`tools/retake-screenshots.ps1` still produces only the original three**
+  (with a *Live* graph, and no menu shot), so running it would replace `board-detail.png` with a
+  different view and leave `board-menu.png` alone. Extending it means seeding a history sidecar
+  for the graph shot, as the README's caption describes.
 - **The installer is unsigned**, so SmartScreen warns on first run.
 - **The update check is unauthenticated** — GitHub allows 60 requests an hour per IP, shared by
   everything behind one router — and a private fork would see a 404. The app words both clearly.

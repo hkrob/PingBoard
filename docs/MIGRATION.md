@@ -126,7 +126,7 @@ Verify the checkout before changing anything:
 
 ```bash
 dotnet build PingBoard.slnx -c Release                                   # expect 0 warnings
-dotnet run --project src/PingBoard.Harness -c Release -- --selftest      # expect 512 passed
+dotnet run --project src/PingBoard.Harness -c Release -- --selftest      # expect 521 passed
 ```
 
 Runtime files are kept out of git on purpose — `.gitignore` covers `*.state.ini`,

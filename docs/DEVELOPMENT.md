@@ -108,6 +108,10 @@ two checks in the script (refusing when locked; restoring state after a failure)
 automated test and no recorded manual run; **a
 fully successful capture run has not yet been confirmed** — see [STATUS.md](STATUS.md).
 
+The set in the repository was last taken differently (see STATUS.md, *Known gaps*): it adds a
+right-click menu shot and a 7-day graph drawn from a seeded history, which this script does not
+yet do.
+
 Screenshots must stay free of anything real: the demo board's hosts only, and the title bar shows
 `demo.ini`.
 

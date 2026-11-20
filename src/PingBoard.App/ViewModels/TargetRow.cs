@@ -155,11 +155,15 @@ public sealed partial class TargetRow : ObservableObject
         TraceHops.Clear();
     }
 
-    public void ToggleDetail()
+    public void ToggleDetail() => SetDetail(!IsDetailOpen);
+
+    public bool IsDetailOpen => DetailVisibility == Visibility.Visible;
+
+    /// <summary>Opens or closes the nested graph area; used when several rows move together.</summary>
+    public void SetDetail(bool open)
     {
-        var expanded = DetailVisibility == Visibility.Visible;
-        DetailVisibility = expanded ? Visibility.Collapsed : Visibility.Visible;
-        DetailGlyph = expanded ? ChevronRight : ChevronDown;
+        DetailVisibility = open ? Visibility.Visible : Visibility.Collapsed;
+        DetailGlyph = open ? ChevronDown : ChevronRight;
     }
 
     /// <summary>
