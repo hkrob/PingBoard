@@ -66,6 +66,8 @@ internal static class SelfTest
             UpdateReleaseParsing();
             ExportsAreParsable();
             SoftAlertWording();
+            AnnouncedEpisodesAlwaysClose();
+            ReverseLookupIsClaimedOnce();
         }
         finally
         {
@@ -84,8 +86,8 @@ internal static class SelfTest
         var settings = new Settings { IntervalMs = 3000, TimeoutMs = 1500, PreferIPv4 = false, MaxConcurrent = 7 };
         var targets = new List<TargetConfig>
         {
-            new() { Name = "gateway", Address = "10.1.10.1" },
-            new() { Name = "hass", Address = "10.1.10.12", Probe = ProbeKind.Tcp, Port = 8123, IntervalMs = 5000 },
+            new() { Name = "gateway", Address = "192.0.2.1" },
+            new() { Name = "hass", Address = "192.0.2.12", Probe = ProbeKind.Tcp, Port = 8123, IntervalMs = 5000 },
             new() { Name = "paused-one", Address = "example.com", Enabled = false },
         };
 
@@ -115,7 +117,7 @@ internal static class SelfTest
         ConfigStore.Save(thresholdPath, new Settings { FailuresBeforeDown = 3 },
         [
             new TargetConfig { Name = "wan", Address = "10.2.10.10", FailuresBeforeDown = 8 },
-            new TargetConfig { Name = "lan", Address = "10.1.10.1" },
+            new TargetConfig { Name = "lan", Address = "192.0.2.1" },
         ]);
 
         var reloaded = ConfigStore.Load(thresholdPath);
@@ -282,7 +284,7 @@ internal static class SelfTest
         Check("state: sidecar path derivation", Path.GetFileName(statePath) == "counters.state.ini");
 
         var settings = new Settings();
-        var target = new PingTarget(new TargetConfig { Name = "gw", Address = "10.1.10.1" }, settings);
+        var target = new PingTarget(new TargetConfig { Name = "gw", Address = "192.0.2.1" }, settings);
         var now = DateTimeOffset.Now;
 
         target.Record(ProbeResult.Ok(5, System.Net.IPAddress.Loopback, 1000, now), settings.FailuresBeforeDown);
@@ -314,7 +316,7 @@ internal static class SelfTest
         var statePath = ConfigStore.StatePathFor(configPath);
 
         var settings = new Settings { RollingWindow = 50 };
-        var target = new PingTarget(new TargetConfig { Name = "gw", Address = "10.1.10.1" }, settings);
+        var target = new PingTarget(new TargetConfig { Name = "gw", Address = "192.0.2.1" }, settings);
         var now = DateTimeOffset.Now;
 
         for (var i = 1; i <= 10; i++)
@@ -327,7 +329,7 @@ internal static class SelfTest
         StateStore.Save(statePath, [target]);
 
         // A fresh process: new target object, history read back off disk.
-        var restored = new PingTarget(new TargetConfig { Name = "gw", Address = "10.1.10.1" }, settings);
+        var restored = new PingTarget(new TargetConfig { Name = "gw", Address = "192.0.2.1" }, settings);
         var loaded = StateStore.LoadHistory(statePath);
 
         Check("history: the sidecar carries history", loaded.ContainsKey("gw"));
@@ -360,7 +362,7 @@ internal static class SelfTest
             StateStore.DecodeHistory("999:5").Count == 0);
 
         // Shrinking the window between runs must keep the newest samples, not the oldest.
-        var narrow = new PingTarget(new TargetConfig { Name = "gw", Address = "10.1.10.1" },
+        var narrow = new PingTarget(new TargetConfig { Name = "gw", Address = "192.0.2.1" },
                                     new Settings { RollingWindow = 10 });
         narrow.RestoreHistory(loaded["gw"]);
 
@@ -427,7 +429,7 @@ internal static class SelfTest
 
         // ---- the suppression rule ----
         var settings = new Settings { FailuresBeforeDown = 2 };
-        var target = new PingTarget(new TargetConfig { Name = "nas", Address = "10.1.10.5" }, settings);
+        var target = new PingTarget(new TargetConfig { Name = "nas", Address = "192.0.2.5" }, settings);
         var now = DateTimeOffset.Now;
 
         StateTransition? fired = null;
@@ -443,7 +445,7 @@ internal static class SelfTest
             afterWindow is { Up: false });
 
         // And a host that recovered quietly during the window must not produce a stray "recovered".
-        var other = new PingTarget(new TargetConfig { Name = "nas2", Address = "10.1.10.6" }, settings);
+        var other = new PingTarget(new TargetConfig { Name = "nas2", Address = "192.0.2.6" }, settings);
         for (var i = 0; i < 4; i++)
             other.Record(ProbeResult.Fail(TargetStatus.Timeout, 3000 + i, now), 2, raiseTransitions: false);
 
@@ -842,26 +844,26 @@ internal static class SelfTest
     private static void FailedProbeKeepsTargetAddress()
     {
         var settings = new Settings();
-        var target = new PingTarget(new TargetConfig { Name = "gw", Address = "10.1.10.82" }, settings);
+        var target = new PingTarget(new TargetConfig { Name = "gw", Address = "192.0.2.82" }, settings);
         var now = DateTimeOffset.Now;
 
-        target.SetResolved(System.Net.IPAddress.Parse("10.1.10.82"));
-        target.Record(ProbeResult.Ok(3, System.Net.IPAddress.Parse("10.1.10.82"), 1000, now),
+        target.SetResolved(System.Net.IPAddress.Parse("192.0.2.82"));
+        target.Record(ProbeResult.Ok(3, System.Net.IPAddress.Parse("192.0.2.82"), 1000, now),
                       settings.FailuresBeforeDown);
 
-        Check("probe: address correct while up", target.Snapshot().DisplayIp == "10.1.10.82");
+        Check("probe: address correct while up", target.Snapshot().DisplayIp == "192.0.2.82");
 
         // How the engine records a real timeout / unreachable: the probed address, not the responder.
         target.Record(ProbeResult.Fail(TargetStatus.Timeout, 2000, now,
                           System.Net.NetworkInformation.IPStatus.TimedOut,
-                          System.Net.IPAddress.Parse("10.1.10.82")),
+                          System.Net.IPAddress.Parse("192.0.2.82")),
                       settings.FailuresBeforeDown);
 
-        Check("probe: address survives a failure", target.Snapshot().DisplayIp == "10.1.10.82");
+        Check("probe: address survives a failure", target.Snapshot().DisplayIp == "192.0.2.82");
 
         // And a result carrying no address at all must not blank the column either.
         target.Record(ProbeResult.Fail(TargetStatus.DnsFail, 3000, now), settings.FailuresBeforeDown);
-        Check("probe: address survives a null-address result", target.Snapshot().DisplayIp == "10.1.10.82");
+        Check("probe: address survives a null-address result", target.Snapshot().DisplayIp == "192.0.2.82");
 
         target.Dispose();
     }
@@ -880,9 +882,9 @@ internal static class SelfTest
         var settings = new Settings { FailuresBeforeDown = 3 };
         var scheduler = new ProbeScheduler(settings);
 
-        var active = new PingTarget(new TargetConfig { Name = "active", Address = "10.1.10.1" }, settings);
+        var active = new PingTarget(new TargetConfig { Name = "active", Address = "192.0.2.1" }, settings);
         var paused = new PingTarget(
-            new TargetConfig { Name = "paused", Address = "10.1.10.2", Enabled = false }, settings);
+            new TargetConfig { Name = "paused", Address = "192.0.2.2", Enabled = false }, settings);
 
         scheduler.AddTarget(active);
         scheduler.AddTarget(paused);
@@ -961,7 +963,7 @@ internal static class SelfTest
         Check("timeout: per-host override wins", overridden.TimeoutMsFrom(settings) == 500);
 
         var inherited = new PingTarget(
-            new TargetConfig { Name = "lan", Address = "10.1.10.1" }, settings);
+            new TargetConfig { Name = "lan", Address = "192.0.2.1" }, settings);
         Check("timeout: falls back to the global default", inherited.TimeoutMsFrom(settings) == 2000);
 
         overridden.Dispose();
@@ -994,7 +996,7 @@ internal static class SelfTest
         Check("threshold: transition reports the value actually used", fired?.Threshold == 8);
 
         // Strict host: no override, so it must still use the global.
-        var strict = new PingTarget(new TargetConfig { Name = "lan", Address = "10.1.10.1" }, settings);
+        var strict = new PingTarget(new TargetConfig { Name = "lan", Address = "192.0.2.1" }, settings);
 
         Check("threshold: unset inherits the global", strict.FailuresBeforeDownFrom(settings) == 3);
 
@@ -1175,12 +1177,12 @@ internal static class SelfTest
         var dispatcher = new AlertDispatcher(settings);
         dispatcher.Enqueue(
             new StateTransition("gateway", Up: false, DateTimeOffset.Now, TimeSpan.Zero, TargetStatus.Timeout, 3),
-            "10.1.10.1");
+            "192.0.2.1");
 
         Check("alerts: webhook actually delivered", arrived.Wait(TimeSpan.FromSeconds(10)));
         Check("alerts: payload names the target", Contains(body, "\"target\":\"gateway\""));
         Check("alerts: payload carries the event", Contains(body, "\"event\":\"down\""));
-        Check("alerts: payload carries the probed address", Contains(body, "10.1.10.1"));
+        Check("alerts: payload carries the probed address", Contains(body, "192.0.2.1"));
         Check("alerts: payload carries a human summary", Contains(body, "\"text\":\""));
 
         _ = dispatcher.DisposeAsync().AsTask().Wait(8000);
@@ -1223,11 +1225,11 @@ internal static class SelfTest
         Check("alerts: body marks the address unresolved",
             unresolved.Body().Contains("(unresolved)", StringComparison.Ordinal));
 
-        var resolved = new AlertPayload("gw", "10.1.10.1", "down", "TIMEOUT",
+        var resolved = new AlertPayload("gw", "192.0.2.1", "down", "TIMEOUT",
             DateTimeOffset.Now, 0, 3, "host");
 
         Check("alerts: a known address is still shown in parentheses",
-            resolved.Summary().Contains("gw (10.1.10.1)", StringComparison.Ordinal));
+            resolved.Summary().Contains("gw (192.0.2.1)", StringComparison.Ordinal));
 
         var badUrl = new AlertSettings { WebhookEnabled = true, WebhookUrl = "definitely not a url" };
         badUrl.Validate();
@@ -1326,10 +1328,10 @@ internal static class SelfTest
         var silent = new TraceHop(7, null, ProbeResult.NoRtt, System.Net.NetworkInformation.IPStatus.TimedOut);
         Check("trace: an unanswered hop renders as *", silent.ToString().EndsWith('*'));
 
-        var answered = new TraceHop(3, System.Net.IPAddress.Parse("10.1.10.1"), 4,
+        var answered = new TraceHop(3, System.Net.IPAddress.Parse("192.0.2.1"), 4,
             System.Net.NetworkInformation.IPStatus.TtlExpired);
         Check("trace: an answered hop shows address and rtt",
-            answered.ToString().Contains("10.1.10.1", StringComparison.Ordinal)
+            answered.ToString().Contains("192.0.2.1", StringComparison.Ordinal)
             && answered.ToString().Contains("4 ms", StringComparison.Ordinal));
 
         Check("trace: settings clamp hop count", ClampedHops() is >= 1 and <= 64);
@@ -1350,8 +1352,8 @@ internal static class SelfTest
     /// Site is a separate axis from Tab by design — a physical location rather than a functional
     /// grouping — and the two must never entangle: a target's tab is untouched by which site it
     /// names, and vice versa. The abbreviation is the whole point of the registry existing at all:
-    /// two targets naming the same site must read identically, never drift into "Conn" on one and
-    /// "Connaught" on the other depending on who typed what.
+    /// two targets naming the same site must read identically, never drift into "Riv" on one and
+    /// "Riverside" on the other depending on who typed what.
     /// </summary>
     private static void SitesAreIndependentOfTabs(string dir)
     {
@@ -1359,20 +1361,20 @@ internal static class SelfTest
 
         var targets = new List<TargetConfig>
         {
-            new() { Name = "gw", Address = "10.1.10.1", Tab = "LAN", Site = "Connaught" },
-            new() { Name = "wan", Address = "1.1.1.1", Tab = "WAN", Site = "Connaught" },
+            new() { Name = "gw", Address = "192.0.2.1", Tab = "LAN", Site = "Riverside" },
+            new() { Name = "wan", Address = "1.1.1.1", Tab = "WAN", Site = "Riverside" },
             new() { Name = "stray", Address = "8.8.8.8", Tab = "LAN" },      // no site at all
         };
 
-        var sites = new List<SiteConfig> { new() { Name = "Connaught", Abbreviation = "Conn" } };
+        var sites = new List<SiteConfig> { new() { Name = "Riverside", Abbreviation = "Riv" } };
 
         ConfigStore.Save(path, new Settings(), targets, null, null, sites);
         var loaded = ConfigStore.Load(path);
 
         Check("sites: membership round-trips",
-            loaded.Targets.First(t => t.Name == "gw").Site == "Connaught");
+            loaded.Targets.First(t => t.Name == "gw").Site == "Riverside");
         Check("sites: abbreviation round-trips",
-            loaded.Sites.First(s => s.Name == "Connaught").Abbreviation == "Conn");
+            loaded.Sites.First(s => s.Name == "Riverside").Abbreviation == "Riv");
         Check("sites: a site-free target has no Site value",
             loaded.Targets.First(t => t.Name == "stray").Site.Length == 0);
         Check("sites: a site-free target is not folded into any default",
@@ -1391,16 +1393,16 @@ internal static class SelfTest
         // known — it must still exist, blank, rather than leaving the target with nowhere to point.
         var implied = Path.Combine(dir, "implied-site.ini");
         ConfigStore.Save(implied, new Settings(),
-            [new TargetConfig { Name = "a", Address = "1.1.1.1", Site = "Northcliffe" }]);
+            [new TargetConfig { Name = "a", Address = "1.1.1.1", Site = "Hillcrest" }]);
 
-        var impliedSite = ConfigStore.Load(implied).Sites.FirstOrDefault(s => s.Name == "Northcliffe");
+        var impliedSite = ConfigStore.Load(implied).Sites.FirstOrDefault(s => s.Name == "Hillcrest");
         Check("sites: a site with no section is reconstructed from membership",
             impliedSite is not null && impliedSite.Abbreviation.Length == 0);
 
         // Autosave paths pass no sites; they must not delete the registry, same contract as tabs.
         ConfigStore.Save(path, new Settings(), targets);
         Check("sites: an autosave without sites preserves the registry",
-            ConfigStore.Load(path).Sites.First(s => s.Name == "Connaught").Abbreviation == "Conn");
+            ConfigStore.Load(path).Sites.First(s => s.Name == "Riverside").Abbreviation == "Riv");
 
         // A board that never used sites must round-trip without gaining a Site key or section.
         var legacy = Path.Combine(dir, "legacy-site.ini");
@@ -1418,15 +1420,15 @@ internal static class SelfTest
 
         var targets = new List<TargetConfig>
         {
-            new() { Name = "gw", Address = "10.1.10.1", Tab = "LAN", Site = "Connaught" },
-            new() { Name = "printer", Address = "10.1.10.5", Tab = "LAN", Site = "Northcliffe" },
-            new() { Name = "wan", Address = "1.1.1.1", Tab = "WAN", Site = "Connaught" },
+            new() { Name = "gw", Address = "192.0.2.1", Tab = "LAN", Site = "Riverside" },
+            new() { Name = "printer", Address = "192.0.2.5", Tab = "LAN", Site = "Hillcrest" },
+            new() { Name = "wan", Address = "1.1.1.1", Tab = "WAN", Site = "Riverside" },
             new() { Name = "stray", Address = "8.8.8.8", Tab = "LAN" },   // no site at all
         };
 
         var tabs = new List<TabConfig>
         {
-            new() { Name = "LAN", Order = 0, SelectedSites = ["Connaught"] },
+            new() { Name = "LAN", Order = 0, SelectedSites = ["Riverside"] },
             new() { Name = "WAN", Order = 1 },   // no filter
         };
 
@@ -1434,14 +1436,14 @@ internal static class SelfTest
         var loaded = ConfigStore.Load(path);
 
         Check("site filter: a tab's selected-sites filter round-trips",
-            loaded.Tabs.First(t => t.Name == "LAN").SelectedSites.SequenceEqual(["Connaught"]));
+            loaded.Tabs.First(t => t.Name == "LAN").SelectedSites.SequenceEqual(["Riverside"]));
         Check("site filter: a tab with no filter round-trips empty",
             loaded.Tabs.First(t => t.Name == "WAN").SelectedSites.Count == 0);
 
         // Autosave paths pass no tabs; they must not delete a tab's site filter.
         ConfigStore.Save(path, new Settings(), targets);
         Check("site filter: an autosave without tabs preserves a tab's site filter",
-            ConfigStore.Load(path).Tabs.First(t => t.Name == "LAN").SelectedSites.SequenceEqual(["Connaught"]));
+            ConfigStore.Load(path).Tabs.First(t => t.Name == "LAN").SelectedSites.SequenceEqual(["Riverside"]));
 
         // A board that never used a site filter must round-trip without gaining a SelectedSites key.
         var legacy = Path.Combine(dir, "legacy-site-filter.ini");
@@ -1459,8 +1461,8 @@ internal static class SelfTest
 
         var targets = new List<TargetConfig>
         {
-            new() { Name = "gw", Address = "10.1.10.1", Tab = "LAN", Tags = ["critical", "dns"] },
-            new() { Name = "printer", Address = "10.1.10.5", Tab = "LAN", Tags = ["Critical"] },   // dupe, different case
+            new() { Name = "gw", Address = "192.0.2.1", Tab = "LAN", Tags = ["critical", "dns"] },
+            new() { Name = "printer", Address = "192.0.2.5", Tab = "LAN", Tags = ["Critical"] },   // dupe, different case
             new() { Name = "wan", Address = "1.1.1.1", Tab = "WAN", Tags = ["critical"] },
             new() { Name = "stray", Address = "8.8.8.8", Tab = "LAN" },                            // no tags at all
         };
@@ -1516,7 +1518,7 @@ internal static class SelfTest
 
         var targets = new List<TargetConfig>
         {
-            new() { Name = "gw", Address = "10.1.10.1", Tab = "LAN" },
+            new() { Name = "gw", Address = "192.0.2.1", Tab = "LAN" },
             new() { Name = "wan", Address = "1.1.1.1", Tab = "WAN" },
             new() { Name = "stray", Address = "8.8.8.8" },     // no tab at all
         };
@@ -1623,7 +1625,7 @@ internal static class SelfTest
         // The load-bearing rule: disabling a tab pauses its targets, and that is entirely separate
         // from a target the user paused by hand.
         var settings = new Settings();
-        var host = new PingTarget(new TargetConfig { Name = "gw", Address = "10.1.10.1", Tab = "WAN" }, settings);
+        var host = new PingTarget(new TargetConfig { Name = "gw", Address = "192.0.2.1", Tab = "WAN" }, settings);
 
         Check("tabs: active while both the target and its tab are enabled", host.IsActive);
 
@@ -1634,7 +1636,7 @@ internal static class SelfTest
         Check("tabs: re-enabling the tab reactivates it", host.IsActive);
 
         // Re-enabling a tab must not resurrect a host the user paused individually.
-        var paused = new TargetConfig { Name = "gw", Address = "10.1.10.1", Tab = "WAN", Enabled = false };
+        var paused = new TargetConfig { Name = "gw", Address = "192.0.2.1", Tab = "WAN", Enabled = false };
         host.UpdateConfig(paused);
         host.TabEnabled = false;
         host.TabEnabled = true;
@@ -2601,7 +2603,7 @@ internal static class SelfTest
         var now = DateTimeOffset.Now;
 
         using var target = new PingTarget(
-            new TargetConfig { Name = "gw, main", Address = "10.1.10.1", Tab = "core" }, settings);
+            new TargetConfig { Name = "gw, main", Address = "192.0.2.1", Tab = "core" }, settings);
 
         for (var i = 0; i < 10; i++)
             target.Record(ProbeResult.Ok(20 + i, System.Net.IPAddress.Loopback, i * 1000, now), 3);
@@ -2703,6 +2705,154 @@ internal static class SelfTest
             new StateTransition("wan", false, now, TimeSpan.Zero, TargetStatus.Timeout, 3), "1.1.1.1");
         Check("alerts: an ordinary outage is unchanged", hard.Event == "down"
             && hard.Summary().Contains("is DOWN", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// Every announced episode gets its closing half: a maintenance window, a tab mute, a hard
+    /// outage or a restart arriving in the middle must not strand it open in the outage log.
+    /// </summary>
+    private static void AnnouncedEpisodesAlwaysClose()
+    {
+        var settings = new Settings { FailuresBeforeDown = 2, RollingWindow = 100 };
+        var now = DateTimeOffset.Now;
+        var ok = System.Net.IPAddress.Loopback;
+
+        // ---- announced down, then quiet, then recovered while quiet ----
+        using var host = new PingTarget(new TargetConfig { Name = "nas", Address = "192.0.2.5" }, settings);
+        StateTransition? down = null;
+        for (var i = 0; i < 3; i++)
+            down ??= host.Record(ProbeResult.Fail(TargetStatus.Timeout, 1000 + i, now), 2);
+
+        Check("closing: the outage is announced before the window", down is { Up: false });
+
+        // The window opens mid-outage: more failures stay quiet...
+        var quietFail = host.Record(ProbeResult.Fail(TargetStatus.Timeout, 1100, now), 2, raiseTransitions: false);
+        Check("closing: no repeat alert inside the window", quietFail is null);
+
+        // ...but the recovery of an outage the user was already told about is still delivered.
+        var quietUp = host.Record(ProbeResult.Ok(4, ok, 1200, now), 2, raiseTransitions: false);
+        Check("closing: a recovery inside a window closes an announced outage",
+            quietUp is { Up: true, Kind: TransitionKind.Hard });
+
+        var journal = new TransitionJournal();
+        journal.Add(down!.Value);
+        journal.Add(quietUp!.Value);
+        Check("closing: and the outage log no longer reads it as ongoing",
+            !journal.Outages(now).Any(o => o.Ongoing));
+
+        // ---- announced degraded, recovered while muted ----
+        var thresholds = new DegradeThresholds(LatencyMs: 100, LossPercent: 0, Samples: 10);
+        using var slow = new PingTarget(new TargetConfig { Name = "wan", Address = "192.0.2.6" }, settings);
+        var tick = 10_000L;
+        StateTransition? Feed(PingTarget t, int rtt, int count, bool raise)
+        {
+            StateTransition? last = null;
+            for (var i = 0; i < count; i++)
+                last = t.Record(ProbeResult.Ok(rtt, ok, tick += 1000, now), 2, raise, thresholds) ?? last;
+            return last;
+        }
+
+        var degraded = Feed(slow, 500, 12, raise: true);
+        Check("closing: degradation is announced", degraded is { Up: false, Kind: TransitionKind.Degraded });
+
+        var clearedQuietly = Feed(slow, 5, 20, raise: false);
+        Check("closing: a degradation that clears inside a window is still closed",
+            clearedQuietly is { Up: true, Kind: TransitionKind.Degraded, IsSuperseded: false });
+
+        // ---- announced degraded, then hard down ----
+        using var worse = new PingTarget(new TargetConfig { Name = "wan2", Address = "192.0.2.7" }, settings);
+        Feed(worse, 500, 12, raise: true);
+
+        StateTransition? hard = null, closedBy = null;
+        for (var i = 0; i < 3 && hard is null; i++)
+        {
+            hard = worse.Record(ProbeResult.Fail(TargetStatus.Timeout, tick += 1000, now), 2, true,
+                                thresholds, out var soft);
+            closedBy ??= soft;
+        }
+
+        Check("closing: going hard down is announced", hard is { Up: false, Kind: TransitionKind.Hard });
+        Check("closing: and closes the degradation it replaced",
+            closedBy is { Up: true, Kind: TransitionKind.Degraded });
+        Check("closing: marked superseded, so it is recorded but never announced",
+            closedBy is { IsSuperseded: true });
+        Check("closing: an ordinary degraded recovery is not superseded",
+            degraded is { IsSuperseded: false } && clearedQuietly is { IsSuperseded: false });
+
+        // ---- announced degraded, then its thresholds are removed ----
+        using var unwatched = new PingTarget(new TargetConfig { Name = "wan3", Address = "192.0.2.8" }, settings);
+        Feed(unwatched, 500, 12, raise: true);
+        var dropped = unwatched.Record(ProbeResult.Ok(500, ok, tick += 1000, now), 2, true, default);
+        Check("closing: removing the thresholds closes an announced degradation",
+            dropped is { Up: true, Kind: TransitionKind.Degraded });
+        Check("closing: recorded only, since nothing actually improved", dropped is { IsSuperseded: true });
+
+        // ---- certificate expiry read inside a window ----
+        using var tls = new PingTarget(
+            new TargetConfig { Name = "tls", Address = "example.com", Probe = ProbeKind.Https }, settings);
+        var expiring = new CertificateInfo("CN=example.com", "CN=CA", now.AddDays(-300), now.AddDays(5), true, "", now);
+
+        Check("closing: an expiring certificate read while quiet raises nothing",
+            tls.SetCertificate(expiring, warnDays: 14, quiet: true) is null);
+        Check("closing: and is still announced on the first read outside the window",
+            tls.SetCertificate(expiring, warnDays: 14) is { Kind: TransitionKind.Certificate });
+
+        // ---- a restart in the middle of an outage ----
+        using var restarted = new PingTarget(new TargetConfig { Name = "gw", Address = "192.0.2.1" }, settings);
+        restarted.RestoreOpenOutage(TransitionKind.Hard, now.AddMinutes(-30), now);
+
+        StateTransition? reannounced = null;
+        for (var i = 0; i < 4; i++)
+            reannounced ??= restarted.Record(ProbeResult.Fail(TargetStatus.Timeout, tick += 1000, now), 2);
+        Check("closing: a host still down after a restart is not announced a second time", reannounced is null);
+
+        // A real tick here, not the synthetic counter: the restored start is placed on the live
+        // monotonic clock, exactly as a probe's own tick is.
+        var backAfterRestart = restarted.Record(ProbeResult.Ok(4, ok, Environment.TickCount64, now), 2);
+        Check("closing: and its recovery closes the outage the previous run opened",
+            backAfterRestart is { Up: true, Kind: TransitionKind.Hard }
+            && backAfterRestart.Value.DownFor >= TimeSpan.FromMinutes(29));
+
+        using var paused = new PingTarget(
+            new TargetConfig { Name = "off", Address = "192.0.2.2", Enabled = false }, settings);
+        paused.RestoreOpenOutage(TransitionKind.Hard, now.AddMinutes(-5), now);
+        var enabled = paused.Config.Clone();
+        enabled.Enabled = true;
+        paused.UpdateConfig(enabled);
+        Check("closing: a paused target is not re-armed",
+            paused.Record(ProbeResult.Ok(4, ok, tick += 1000, now), 2) is null);
+
+        // ---- a second down with no recovery between them ----
+        var orphaned = new TransitionJournal();
+        orphaned.Add(new StateTransition("flap", false, now.AddMinutes(-10), TimeSpan.Zero, TargetStatus.Timeout, 2));
+        orphaned.Add(new StateTransition("flap", false, now.AddMinutes(-4), TimeSpan.Zero, TargetStatus.Timeout, 2));
+        var flaps = orphaned.Outages(now);
+        Check("closing: of two unpaired downs only the later one reads as ongoing",
+            flaps.Count == 2 && flaps.Count(o => o.Ongoing) == 1);
+        Check("closing: and the earlier one ends where the later one starts",
+            flaps.Any(o => !o.Ongoing && o.Duration == TimeSpan.FromMinutes(6)));
+
+        Check("closing: open outages are listed for re-arming",
+            orphaned.OpenOutages() is [{ TargetName: "flap", Up: false }]);
+    }
+
+    /// <summary>
+    /// A reverse lookup is claimed one at a time, and only where its answer is ever shown.
+    /// </summary>
+    private static void ReverseLookupIsClaimedOnce()
+    {
+        var settings = new Settings();
+        using var literal = new PingTarget(new TargetConfig { Name = "a", Address = "192.0.2.9" }, settings);
+        using var named = new PingTarget(new TargetConfig { Name = "b", Address = "example.com" }, settings);
+
+        Check("reverse: a literal address may be looked up", literal.TryBeginReverseLookup());
+        Check("reverse: but not twice at once", !literal.TryBeginReverseLookup());
+
+        literal.EndReverseLookup();
+        literal.SetReverseName("");
+        Check("reverse: nor again once answered, even with no PTR", !literal.TryBeginReverseLookup());
+
+        Check("reverse: a target entered by name is never looked up", !named.TryBeginReverseLookup());
     }
 
     private static void Check(string name, bool ok)

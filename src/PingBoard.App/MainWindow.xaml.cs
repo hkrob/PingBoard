@@ -529,6 +529,10 @@ public sealed partial class MainWindow : Window
         // either way, so nothing is lost by staying quiet.
         if (transition.Kind != TransitionKind.Hard && !Vm.Settings.NotifyOnDegraded) return;
 
+        // A degraded episode closed by an outage: recorded for the log, and the "down" toast
+        // already covers it. See StateTransition.IsSuperseded.
+        if (transition.IsSuperseded) return;
+
         // Muted suppresses the popup only. Webhook and email alerting is left running on purpose:
         // it exists to reach you when you are away from this machine, and silencing it because
         // someone quietened a desktop toast would be the opposite of what they asked for.

@@ -26,6 +26,10 @@ tray, autostart, and a self-updating per-user installer. Nothing in that list is
   version/release parsing.
 - **Suspend/resume logic** — that counters freeze, failure streaks clear, nothing is announced while
   suspended, an outage announced before sleep stays open, and a recovery is alerted on wake.
+- **Every announced episode closes** — a recovery inside a maintenance window or a muted tab, a
+  degradation ended by a hard outage or by its thresholds being removed, a certificate warning read
+  while quiet, a target's latch re-armed for an outage left open by the previous run (the target
+  side only; see *Not verified*), and two unpaired downs in the journal.
 - **Build and tests on every push to `main` and every pull request to `main`**, on `windows-latest`, via CI.
 - **Memory.** An early soak (24 targets, ~48 probes/s, about 20 000 probes) held the managed heap
   flat at under 1 MB; the history rings are fixed-size by construction. It was measured on an early
@@ -57,7 +61,12 @@ These are believed to work and are not proven. Each has a way to settle it.
    skipping — rather than stacking — a probe whose predecessor is still in flight hold by
    construction (see `ProbeScheduler.cs`), but no test drives the scheduler through them. The
    soak run is the evidence; a regression here would show as probe bursts or a growing task count.
-5. **Toast notifications as such.** `AppNotificationManager.Register()` fails under self-contained
+5. **Carrying open outages across a restart, end to end.** `PingTarget.RestoreOpenOutage` is
+   self-tested; its caller, `MainViewModel.ResumeOpenOutages`, is App code and has only been
+   compiled. To settle it: with the outage log on, let a target go down and be announced, close
+   PingBoard, bring the host back, start PingBoard — expect one "recovered" notification and the
+   outage closed in the log, with no second "down".
+6. **Toast notifications as such.** `AppNotificationManager.Register()` fails under self-contained
    deployment (it needs a resource DLL that ships only with the installed framework runtime), so the
    app always falls back to a tray balloon, which Windows 11 renders as an ordinary toast. The
    toast code path itself is therefore not exercised in the shipped configuration.
@@ -100,7 +109,7 @@ README's [Design notes](../README.md#design-notes) and in the doc comments of th
 | **One `Ping` per target**, never `ping.exe` | `Ping` is not reentrant; a process per probe is ~5 MB each | `Probes.cs` |
 | **ICMP plus TCP and HTTP(S)** | Plenty of hosts and firewalls drop ICMP silently, which would read as a dead target | README |
 | **Degraded thresholds off by default** | "Too slow" is a statement about one link; a global default is a guess about someone else's network | `Settings.cs` |
-| **Quiet suppresses the announcement, not the probe** | A host still down when maintenance ends must alert then, not never | `ProbeScheduler.RecordAndNotify` |
+| **Quiet suppresses the announcement, not the probe — and never the closing half of one already made** | A host still down when maintenance ends must alert then, not never; a host announced down before the window must still report its recovery, or the outage stays open in the log | `ProbeScheduler.RecordAndNotify`, `PingTarget.Record` |
 | **Counters are lifetime, but the rolling window is the figure to read** | A lifetime ratio is dragged down for ever by an old outage | README |
 | **Soft transitions reuse the CSV `event` column** | A new column would put every older row under the wrong heading | `TransitionLog.cs` |
 | **Unpackaged, self-contained, per-user Inno Setup install** | Copy-and-run, no runtime prerequisite, no UAC to install or update | `installer/PingBoard.iss` |

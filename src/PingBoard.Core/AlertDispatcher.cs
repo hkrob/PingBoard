@@ -81,6 +81,10 @@ public sealed class AlertDispatcher : IAsyncDisposable
         // arriving for a condition that was never announced.
         if (transition.Kind != TransitionKind.Hard && !settings.NotifyOnDegraded) return;
 
+        // Bookkeeping for the outage log, not news: the "down" alert sent alongside it says all
+        // there is to say.
+        if (transition.IsSuperseded) return;
+
         if (transition.Up && !settings.NotifyOnRecovery) return;
 
         if (IsWithinCooldown(transition, settings)) return;

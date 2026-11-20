@@ -101,7 +101,7 @@ and renaming it resets that target's history.
 | `Tab` | *(General)* | The one tab this target belongs to. Empty means the default group |
 | `Site` | *(none)* | The one physical site it belongs to. Empty means none |
 | `Tags` | *(none)* | Free-form labels, any number, comma-separated |
-| `Maintenance` | *(none)* | Quiet hours, e.g. `Sat 22:00-02:00, Sun 03:00-05:00`. Probing continues; only alerts are held back. Syntax in the [README](../README.md#maintenance-windows) |
+| `Maintenance` | *(none)* | Quiet hours, e.g. `Sat 22:00-02:00, Sun 03:00-05:00`. Probing continues; new alerts are held back, but an outage announced before the window opened still sends its recovery. Syntax in the [README](../README.md#maintenance-windows) |
 
 **Per-target overrides** — each inherits the `[Settings]` value when absent:
 
@@ -133,7 +133,7 @@ Maintenance=Sun 03:00-05:00
 | Key | Default | Meaning |
 |---|---|---|
 | `Enabled` | `true` | `false` stops probing every target in the tab, exactly as if each were paused |
-| `Muted` | `false` | Silences desktop, webhook and email alerts for the tab while probing continues |
+| `Muted` | `false` | Silences new desktop, webhook and email alerts for the tab while probing continues. The recovery of an outage announced before the mute is still sent |
 | `Order` | file order | Display order |
 | `SelectedTags` | *(none)* | Non-empty turns the tab into a **saved view** over the *whole* board: it shows every target carrying at least one of these tags, wherever its own `Tab` points |
 | `SelectedSites` | *(none)* | The same, against `Site`. When both filters are set a target must pass both |

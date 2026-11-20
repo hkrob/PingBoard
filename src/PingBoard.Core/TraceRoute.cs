@@ -17,7 +17,7 @@ public readonly record struct TraceHop(int Ttl, IPAddress? Address, int RttMs, I
 {
     public bool Answered => Address is not null;
 
-    /// <summary>Traditional traceroute rendering: <c>7  10.1.10.1  4 ms</c>, or <c>*</c> for silence.</summary>
+    /// <summary>Traditional traceroute rendering: <c>7  192.0.2.1  4 ms</c>, or <c>*</c> for silence.</summary>
     public override string ToString() => Answered
         ? $"{Ttl,2}  {Address}  {(RttMs >= 0 ? RttMs + " ms" : "")}".TrimEnd()
         : $"{Ttl,2}  *";

@@ -94,7 +94,7 @@ structurally — it is a separate project — so the part that has to be correct
 stress-tested without XAML in the way.
 
 ```bash
-dotnet run --project src/PingBoard.Harness -- --selftest        # 446 assertions
+dotnet run --project src/PingBoard.Harness -- --selftest        # 470 assertions
 dotnet run --project src/PingBoard.Harness -- board.ini --seconds 300
 ```
 
@@ -119,10 +119,10 @@ LogEnabled=true
 LogPath=pingboard-events.csv
 
 [Target:gateway]
-Address=10.1.10.1
+Address=192.0.2.1
 
 [Target:homeassistant]
-Address=10.1.10.12
+Address=192.0.2.12
 Probe=tcp
 Port=8123
 IntervalMs=5000            ; any [Settings] key can be overridden per target
@@ -186,7 +186,7 @@ Enabled=false              ; every target in this tab stops being probed
 Order=1
 
 [Target:gateway]
-Address=10.1.10.1
+Address=192.0.2.1
 Tab=LAN
 ```
 
@@ -226,23 +226,23 @@ those are about screen space, not about what a particular group of hosts needs s
 
 ### Sites
 
-A physical location — `Connaught`, `Northcliffe` — kept deliberately separate from a tab. A tab is a
+A physical location — `Riverside`, `Hillcrest` — kept deliberately separate from a tab. A tab is a
 functional grouping chosen for the board; a site is a place. A tab can span several sites and a site
 can span several tabs, so the two are orthogonal rather than one being a kind of the other.
 
 ```ini
-[Site:Connaught]
-Abbreviation=Conn
+[Site:Riverside]
+Abbreviation=Riv
 
 [Target:core-switch]
-Address=10.1.10.1
-Site=Connaught
+Address=192.0.2.1
+Site=Riverside
 ```
 
 Set from the target dialog: pick an existing site from the dropdown and its abbreviation fills in
 from the registry; type a new one and it starts blank. The abbreviation lives once per site, not
 once per target — editing it on any one target at a site updates every other target there
-immediately, on disk and on the board, rather than drifting into `Conn` on one and `Connaught` on
+immediately, on disk and on the board, rather than drifting into `Riv` on one and `Riverside` on
 another depending on who typed what.
 
 Two columns carry it, `Site` and `Site Abbreviation`, hidden by default like the certificate
@@ -321,7 +321,7 @@ Scheduled quiet hours, per target:
 
 ```ini
 [Target:nas]
-Address=10.1.10.5
+Address=192.0.2.5
 Maintenance=Sat 22:00-02:00, Sun 03:00-05:00
 ```
 
@@ -336,6 +336,12 @@ The part that matters: a host **still down when the window closes alerts then**.
 simply swallowed the transition, a host that died during maintenance and never returned would be
 marked as already-announced and you would never be told. Quiet while you expected the outage; loud
 the moment you did not.
+
+The reverse holds too: a host that was **already announced down before the window opened** still
+sends its recovery if it comes back during the window. Quiet holds back new news, not the end of
+news you have already been given, so the outage log never keeps an outage open that is actually
+over. The same rule carries outages across a restart: one still open when PingBoard closed is
+closed by the first good reply after it starts again, and is not announced a second time.
 
 ### Availability
 

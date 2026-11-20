@@ -354,7 +354,7 @@ public sealed class ProbeScheduler : IAsyncDisposable
 
             // Populate the Hostname column for targets entered by IP. Fire-and-forget by design:
             // a reverse lookup must never delay or fail a probe.
-            if (!target.HasReverseName && !ct.IsCancellationRequested)
+            if (!ct.IsCancellationRequested && target.TryBeginReverseLookup())
                 _ = ReverseLookupAsync(target, address, ct);
         }
         catch (OperationCanceledException)
@@ -534,15 +534,18 @@ public sealed class ProbeScheduler : IAsyncDisposable
                 .InspectAsync(target.Config.Address, address, port, settings.TimeoutMs * 2, ct)
                 .ConfigureAwait(false);
 
+            // Suppressed by the same two conditions as every other alert, and for the same reason:
+            // a maintenance window and a muted tab are statements about being left alone. Passed
+            // in rather than applied to the result, so a suppressed warning is not also latched as
+            // given — see SetCertificate.
+            var quiet = target.TabMuted || target.InMaintenance(info.CheckedAt);
+
             // A host that was simply unreachable at startup should not go uninspected until this
             // evening, so a failed read asks to be retried in minutes.
             var transition = target.SetCertificate(
-                info, settings.CertWarnDays, info.HasCertificate ? 0 : RetryMinutes);
+                info, settings.CertWarnDays, info.HasCertificate ? 0 : RetryMinutes, quiet);
 
-            // Suppressed by the same two conditions as every other alert, and for the same reason:
-            // a maintenance window and a muted tab are statements about being left alone.
-            if (transition is { } t && !target.TabMuted && !target.InMaintenance(t.When))
-                Transition?.Invoke(t);
+            if (transition is { } t) Transition?.Invoke(t);
         }
         catch (OperationCanceledException)
         {
@@ -612,6 +615,7 @@ public sealed class ProbeScheduler : IAsyncDisposable
         }
         catch (OperationCanceledException) { /* shutting down */ }
         catch (Exception) { /* best-effort only */ }
+        finally { target.EndReverseLookup(); }
     }
 
     public async ValueTask DisposeAsync()
