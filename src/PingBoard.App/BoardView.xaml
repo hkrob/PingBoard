@@ -383,11 +383,40 @@
                 <DataTemplate x:DataType="vm:TargetRow">
                   <StackPanel Opacity="{x:Bind RowOpacity, Mode=OneWay}">
                     <!-- Attached to the row rather than to the ListView, so the command acts on the
-                         row that was right-clicked instead of on whatever happens to be selected. -->
+                         row that was right-clicked. Commands that make sense for several rows act
+                         on the whole selection when the clicked row is part of it, and on that row
+                         alone when it is not (RowCommands.TargetsFor). Labels are set in
+                         OnRowMenuOpening, keyed by Tag, since they depend on what is selected. -->
                     <StackPanel.ContextFlyout>
-                        <MenuFlyout>
-                            <MenuFlyoutItem Text="Trace path now" Click="OnTraceNow">
+                        <MenuFlyout Opening="OnRowMenuOpening">
+                            <MenuFlyoutItem Tag="edit" Text="Edit…" Click="OnRowEdit" KeyboardAcceleratorTextOverride="F2">
+                                <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE70F;" /></MenuFlyoutItem.Icon>
+                            </MenuFlyoutItem>
+                            <MenuFlyoutItem Tag="duplicate" Text="Duplicate…" Click="OnRowDuplicate">
+                                <MenuFlyoutItem.Icon><FontIcon Glyph="&#xF413;" /></MenuFlyoutItem.Icon>
+                            </MenuFlyoutItem>
+                            <MenuFlyoutItem Tag="pause" Text="Pause" Click="OnRowPause">
+                                <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE769;" /></MenuFlyoutItem.Icon>
+                            </MenuFlyoutItem>
+                            <MenuFlyoutSeparator />
+                            <MenuFlyoutItem Tag="graph" Text="Show latency graph" Click="OnRowGraph">
+                                <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE9D9;" /></MenuFlyoutItem.Icon>
+                            </MenuFlyoutItem>
+                            <MenuFlyoutItem Tag="trace" Text="Trace path now" Click="OnTraceNow">
                                 <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE71B;" /></MenuFlyoutItem.Icon>
+                            </MenuFlyoutItem>
+                            <MenuFlyoutSubItem Text="Copy">
+                                <MenuFlyoutSubItem.Icon><FontIcon Glyph="&#xE8C8;" /></MenuFlyoutSubItem.Icon>
+                                <MenuFlyoutItem Tag="copy-address" Text="Address" Click="OnRowCopyAddress" />
+                                <MenuFlyoutItem Tag="copy-ip" Text="IP address" Click="OnRowCopyIp" />
+                                <MenuFlyoutItem Tag="copy-hostname" Text="Hostname" Click="OnRowCopyHostname" />
+                            </MenuFlyoutSubItem>
+                            <MenuFlyoutSeparator />
+                            <MenuFlyoutItem Tag="reset" Text="Reset statistics" Click="OnRowReset">
+                                <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE72C;" /></MenuFlyoutItem.Icon>
+                            </MenuFlyoutItem>
+                            <MenuFlyoutItem Tag="remove" Text="Remove…" Click="OnRowRemove" KeyboardAcceleratorTextOverride="Del">
+                                <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE74D;" /></MenuFlyoutItem.Icon>
                             </MenuFlyoutItem>
                         </MenuFlyout>
                     </StackPanel.ContextFlyout>
@@ -544,7 +573,7 @@
                     <TextBlock Text="{x:Bind Vm.StatusText, Mode=OneWay}" FontSize="12" Opacity="0.75" />
                 </StackPanel>
                 <TextBlock HorizontalAlignment="Right" FontSize="12" Opacity="0.45"
-                           Text="Double-click to edit · Ins add · Del remove · closing hides to tray" />
+                           Text="Double-click to edit · right-click for more · Ins add · Del remove · closing hides to tray" />
             </Grid>
         </Border>
     </Grid>
