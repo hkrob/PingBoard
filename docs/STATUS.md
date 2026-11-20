@@ -83,6 +83,11 @@ These are believed to work and are not proven. Each has a way to settle it.
 - **The README is long.** It has grown by feature. [CONFIGURATION.md](CONFIGURATION.md) and
   [ARCHITECTURE.md](ARCHITECTURE.md) now carry the reference material, so the README could be
   trimmed to an overview with links.
+- **No long-term latency history.** Ping times are kept only in the history ring (`RollingWindow`
+  samples, max 10 000 — about 2.8 h at a 1 s interval). `AvailabilityLog`'s 30-day hourly buckets
+  count OK/NOK only. Proposed (not started): extend those buckets with min/avg/max/~p95 RTT per
+  hour (fixed 720 per target, persisted in the state sidecar), a 24h/7d/30d selector on the expanded
+  latency graph, and the same in the History export. Would ship as 1.12.0.
 - **Alert delivery** is a static `Authorization` header for the webhook and plain SMTP login for
   email. There is no OAuth, retry queue or delivery history.
 
