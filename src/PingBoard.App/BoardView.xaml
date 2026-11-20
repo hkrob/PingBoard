@@ -486,8 +486,23 @@
                     <StackPanel Visibility="{x:Bind DetailVisibility, Mode=OneWay}"
                                 Margin="30,4,14,12" Spacing="2">
 
+                        <!-- Live is the retained per-probe window; the others read the hourly
+                             record. Per row, not saved: see TargetRow.GraphRange. -->
+                        <ComboBox SelectedIndex="{x:Bind GraphRange, Mode=TwoWay}"
+                                  FontSize="11"
+                                  MinWidth="96"
+                                  Margin="46,0,0,4"
+                                  ToolTipService.ToolTip="Time span of the latency graph"
+                                  AutomationProperties.Name="Latency graph time span">
+                            <ComboBoxItem Content="Live" />
+                            <ComboBoxItem Content="24 hours" />
+                            <ComboBoxItem Content="7 days" />
+                            <ComboBoxItem Content="30 days" />
+                        </ComboBox>
+
                         <controls:LatencyGraph Row="{x:Bind}"
                                                Version="{x:Bind HistoryVersion, Mode=OneWay}"
+                                               Range="{x:Bind GraphRange, Mode=OneWay}"
                                                Height="110"
                                                Margin="0,0,0,8" />
 

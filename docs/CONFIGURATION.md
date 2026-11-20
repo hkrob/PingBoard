@@ -20,7 +20,7 @@ A **board** is one `.ini` plus sidecars that share its name and sit in the same 
 | File | Written by | Holds |
 |---|---|---|
 | `<board>.ini` | you, and the app on every edit | settings, targets, tabs, sites, alert sinks |
-| `<board>.state.ini` | the app, every 60 s and on exit | counters, probe history, availability |
+| `<board>.state.ini` | the app, every 60 s and on exit | counters, probe history, 30 days of hourly availability and latency |
 | `<board>.outages.csv` | the app | the outage log, so it survives a restart |
 | `<LogPath>` (default `pingboard-events.csv`) | the app | every up/down/degraded transition |
 | `<LogPath>.traces.txt` | the app | the traceroute taken when a target went down |

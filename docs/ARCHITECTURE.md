@@ -66,7 +66,7 @@ UI never reads live engine state: a 4 Hz timer pulls immutable snapshots into ro
 | State | `PingTarget.cs` | `TargetConfig`, `TargetCounters`, `TargetSnapshot`, `PingTarget`, `StateTransition` — all mutable per-target state, behind one lock |
 | | `TargetStatus.cs` | `TargetStatus`, `ProbeKind`, and the extension helpers that classify a status |
 | | `RingBuffer.cs` | Fixed-capacity history with rolling stats (loss, min/avg/max, jitter) |
-| | `AvailabilityLog.cs` | 24 h / 7 d / 30 d availability, as opposed to the last few minutes |
+| | `AvailabilityLog.cs` | 30 days of hourly buckets: availability, and round-trip min/max/sum plus a 32-bin histogram for ~p95; `Series()` returns immutable `LatencyBucket`s for the graph and the Hourly export |
 | | `Maintenance.cs` | Parses and evaluates `Sat 22:00-02:00`-style quiet hours |
 | Records | `TransitionLog.cs` | Size-rotated CSV of transitions, plus the `.traces.txt` sibling |
 | | `TransitionJournal.cs` | Recent transitions in memory, paired into outages |
@@ -99,7 +99,7 @@ UI never reads live engine state: a 4 Hz timer pulls immutable snapshots into ro
 | | `ViewModels/TabItem.cs` | One tab in the strip |
 | | `ViewModels/ColumnLayout.cs` | **Single source of truth** for column widths/visibility/order, shared by header and rows |
 | | `ViewModels/ColumnFitter.cs` | Measures how wide each column needs to be |
-| Controls | `Controls/Sparkline.cs`, `Controls/LatencyGraph.cs` | Hand-drawn per-row history strip and the expanded latency chart |
+| Controls | `Controls/Sparkline.cs`, `Controls/LatencyGraph.cs` | Hand-drawn per-row history strip and the expanded latency chart (live window, or 24 h / 7 d / 30 d from the hourly record) |
 | | `Controls/BoardPalette.cs`, `Controls/BrushKeyConverter.cs` | Resolve a status *key* to a brush at bind time, so theme switches recolour live |
 | Theme | `Theme/Board.xaml`, `MatrixTheme.cs` | Light/dark/high-contrast status colours; the green-phosphor override |
 | Dialogs | `TargetDialog`, `SettingsDialog` (XAML) | The two large forms |
@@ -138,7 +138,7 @@ rather than per probe.
 | File | Format | Written |
 |---|---|---|
 | `board.ini` | INI | on every edit; atomic temp-file-then-rename, previous kept as `.bak` |
-| `board.state.ini` | INI; history as compact `status:rtt` pairs (timestamps dropped on purpose) | autosave + exit |
+| `board.state.ini` | INI; history as compact `status:rtt` pairs (timestamps dropped on purpose); `Availability` and, from 1.12, `Latency` hourly buckets | autosave + exit |
 | `board.outages.csv` | append-only CSV, rewritten when it needs compaction | on each transition |
 | transition CSV (`LogPath`) | CSV, rotated by size | on each transition |
 | `ui-state.ini` | INI, per machine | when a UI preference changes |
@@ -159,7 +159,8 @@ for weeks.
 2. **The UI reads immutable snapshots, never live state.** `PingTarget` guards all mutable state
    with one lock; `TargetSnapshot` is what leaves it.
 3. **No unbounded collection on a probe path.** History is a preallocated ring; a growing list at
-   1 Hz across dozens of targets is ~100 MB a day.
+   1 Hz across dozens of targets is ~100 MB a day. The long-term record is likewise fixed: 720
+   hourly slots, each with its counters and a 32-bin latency histogram (about 118 KB per target).
 4. **Monotonic ticks (`Environment.TickCount64`) for every duration and schedule; wall clock for
    display only.** An NTP step or DST change must not corrupt elapsed times.
 5. **Paused and Suspended are not failures.** They are excluded from the rolling figures, and a
@@ -191,6 +192,11 @@ for weeks.
 13. **One `Ping` instance per target.** `Ping` is not reentrant; never shell out to `ping.exe`.
 14. **Every `TcpClient` is disposed in a `finally`.** An abandoned half-open connect leaks a handle
     per probe.
+15. **The state sidecar only ever gains keys; it never widens an existing value.** Hourly latency is
+    its own `Latency` key rather than extra fields on the `Availability` triplets, because 1.11 and
+    earlier discard any availability entry that is not exactly three numbers — widening it would
+    make a downgrade silently lose every availability figure. Decoders skip what they cannot parse
+    and never throw.
 
 WinUI 3 specifics — a `Window` is not a `FrameworkElement`, `dotnet publish` drops the app's
 `.pri`, `x:Name` fields are private, theme must be applied to the *content root* for Mica to follow,

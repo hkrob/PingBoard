@@ -14,7 +14,8 @@ commit**. A status page that lags the code is worse than none.
 The feature set is described in the [README](../README.md): ICMP/TCP/HTTP(S) probes, tabs, sites and
 tags with saved views, maintenance windows, degraded state, certificate expiry, rolling and
 long-run availability, failure traces, the outage log, CSV export, webhook and email alerts, the
-tray, autostart, and a self-updating per-user installer. Nothing in that list is stubbed.
+tray, autostart, a self-updating per-user installer, and thirty days of hourly latency history
+with a 24h/7d/30d graph and an Hourly export. Nothing in that list is stubbed.
 
 ## Verified by automation
 
@@ -22,8 +23,11 @@ tray, autostart, and a self-updating per-user installer. Nothing in that list is
   classification, the ring buffer and its rolling statistics, the concurrency ceiling following its
   setting, per-target overrides and thresholds, degraded/certificate/outage
   state machines, config round-tripping and hand-edit tolerance, atomic saves and `.bak` recovery,
-  alert delivery against a local listener, secret protection, HTTP status judging, and update
-  version/release parsing.
+  alert delivery against a local listener, secret protection, HTTP status judging, update
+  version/release parsing, and the hourly latency record — what counts as a reply, the ~p95 and
+  its bin error, grouping into 4-hour bars from merged histograms, slot reuse after thirty days,
+  the `Latency` sidecar key round-tripping, a pre-1.12 sidecar loading without it, rejection of
+  corrupt entries, and the Hourly export.
 - **Suspend/resume logic** — that counters freeze, failure streaks clear, nothing is announced while
   suspended, an outage announced before sleep stays open, and a recovery is alerted on wake.
 - **Every announced episode closes** — a recovery inside a maintenance window or a muted tab, a
@@ -34,6 +38,9 @@ tray, autostart, and a self-updating per-user installer. Nothing in that list is
 - **Memory.** An early soak (24 targets, ~48 probes/s, about 20 000 probes) held the managed heap
   flat at under 1 MB; the history rings are fixed-size by construction. It was measured on an early
   build — re-run the harness for a few minutes after any change to the engine's hot path.
+  **Not re-run for 1.12**, which added hourly latency to every probe's path: the harness cannot run
+  a board on the Linux host that change was made on. The baseline is higher by construction —
+  about 118 KB of preallocated hourly buckets per target — and should still be flat.
 
 ## Not verified
 
@@ -70,10 +77,19 @@ These are believed to work and are not proven. Each has a way to settle it.
    deployment (it needs a resource DLL that ships only with the installed framework runtime), so the
    app always falls back to a tray balloon, which Windows 11 renders as an ordinary toast. The
    toast code path itself is therefore not exercised in the shipped configuration.
+7. **The 24h/7d/30d latency graph, as drawn.** The data behind it is self-tested; the view itself
+   (`LatencyGraph`'s long-range mode and the selector in `BoardView.xaml`) was written on a Linux
+   host where the WinUI project cannot build, so it has been compiled by CI and never seen on
+   screen. To settle it: expand a row on a board with a few hours of history and switch through
+   Live / 24 hours / 7 days / 30 days. Expect bars only for hours with probes, a lighter p95 band
+   above each average, red strips on hours with loss, a caption with avg/~p95/max/loss, and no
+   layout freeze (the `LayoutCycleException` symptom: the window stops responding to clicks).
+   Also run **Export… → Hourly** and open the CSV.
 
 ## Known gaps
 
-- **Screenshots** cover the board, the expanded latency graph and the Matrix theme only. None shows
+- **Screenshots** cover the board, the expanded latency graph (live view only, taken before the
+  24h/7d/30d selector existed) and the Matrix theme only. None shows
   the tab strip, tag/site saved views, the settings or target dialogs, or the outage log, and the
   existing three predate those features. `tools/retake-screenshots.ps1` regenerates them from
   [`demo.ini`](demo.ini); extending it to more views is straightforward.
@@ -83,11 +99,6 @@ These are believed to work and are not proven. Each has a way to settle it.
 - **The README is long.** It has grown by feature. [CONFIGURATION.md](CONFIGURATION.md) and
   [ARCHITECTURE.md](ARCHITECTURE.md) now carry the reference material, so the README could be
   trimmed to an overview with links.
-- **No long-term latency history.** Ping times are kept only in the history ring (`RollingWindow`
-  samples, max 10 000 — about 2.8 h at a 1 s interval). `AvailabilityLog`'s 30-day hourly buckets
-  count OK/NOK only. Proposed (not started): extend those buckets with min/avg/max/~p95 RTT per
-  hour (fixed 720 per target, persisted in the state sidecar), a 24h/7d/30d selector on the expanded
-  latency graph, and the same in the History export. Would ship as 1.12.0.
 - **Alert delivery** is a static `Authorization` header for the webhook and plain SMTP login for
   email. There is no OAuth, retry queue or delivery history.
 

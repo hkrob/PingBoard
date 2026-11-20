@@ -8,8 +8,9 @@ namespace PingBoard.App;
 /// <summary>
 /// Chooses what to export, then where to put it.
 /// <para>
-/// Three separate sheets rather than one combined file, because they answer different questions and
-/// have different shapes: one row per target, one row per outage, one row per probe. Merging them
+/// Four separate sheets rather than one combined file, because they answer different questions and
+/// have different shapes: one row per target, one row per outage, one row per probe, one row per
+/// hour. Merging them
 /// would give a spreadsheet that cannot be sorted usefully by anything.
 /// </para>
 /// </summary>
@@ -26,11 +27,13 @@ public static class ExportDialog
         var board = new RadioButton { Content = "Board — one row per target, with availability", IsChecked = true };
         var outages = new RadioButton { Content = "Outages — one row per outage, with durations" };
         var history = new RadioButton { Content = "History — every retained probe sample" };
+        var hourly = new RadioButton { Content = "Hourly — one row per target per hour, last 30 days" };
 
         var note = new TextBlock
         {
-            Text = "History covers the retained window only — a few hundred samples per target, "
-                 + "not the whole record.",
+            Text = "History covers the retained window only — a few hundred samples per target. "
+                 + "Hourly is the long-term record: probes, loss and min/avg/max/~p95 round-trip "
+                 + "time for each hour.",
             Opacity = 0.7,
             TextWrapping = TextWrapping.Wrap,
             MaxWidth = 380,
@@ -41,6 +44,7 @@ public static class ExportDialog
         body.Children.Add(board);
         body.Children.Add(outages);
         body.Children.Add(history);
+        body.Children.Add(hourly);
         body.Children.Add(note);
 
         var dialog = new ContentDialog
@@ -58,6 +62,7 @@ public static class ExportDialog
         var (name, content) =
             outages.IsChecked == true ? ("pingboard-outages", (Func<string>)vm.ExportOutages)
             : history.IsChecked == true ? ("pingboard-history", vm.ExportHistory)
+            : hourly.IsChecked == true ? ("pingboard-hourly", vm.ExportHourly)
             : ("pingboard-board", vm.ExportBoard);
 
         var saved = await SaveAsync(name, content, report);
