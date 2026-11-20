@@ -214,7 +214,14 @@ public sealed class TransitionJournal
             {
                 // A second down without an intervening recovery should not lose the first. It
                 // cannot happen from one target, but a restored file can be missing rows.
-                if (open.TryGetValue(key, out var orphan)) closed.Add(orphan);
+                // It is closed where the next one opens: its real end is unknown, but it is
+                // certainly over, and adding it with End left null listed it as "ongoing" with a
+                // zero duration — a phantom live outage beside the real one.
+                if (open.TryGetValue(key, out var orphan))
+                {
+                    var lasted = e.When > orphan.Start ? e.When - orphan.Start : TimeSpan.Zero;
+                    closed.Add(orphan with { End = e.When, Duration = lasted });
+                }
                 open[key] = new Outage(e.TargetName, e.When, null, TimeSpan.Zero, e.Status, e.Kind);
                 continue;
             }
@@ -254,6 +261,15 @@ public sealed class TransitionJournal
 
         closed.Sort(static (a, b) => b.Start.CompareTo(a.Start));
         return closed;
+    }
+
+    /// <summary>
+    /// The transition that opened each outage still in progress, for re-arming the targets'
+    /// latches after a restart — see <see cref="PingTarget.RestoreOpenOutage"/>.
+    /// </summary>
+    public IReadOnlyList<StateTransition> OpenOutages()
+    {
+        lock (_gate) return [.. _open.Values];
     }
 
     /// <summary>

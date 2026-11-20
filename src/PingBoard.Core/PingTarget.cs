@@ -41,7 +41,8 @@ public sealed class TargetConfig
     public string Path { get; set; } = "/";
 
     /// <summary>
-    /// Scheduled quiet hours, e.g. <c>Sat 22:00-02:00</c>. Probing continues; alerts do not fire.
+    /// Scheduled quiet hours, e.g. <c>Sat 22:00-02:00</c>. Probing continues; new alerts do not
+    /// fire, though the recovery of an outage announced before the window opened still does.
     /// See <see cref="MaintenanceSchedule"/>.
     /// </summary>
     public string Maintenance { get; set; } = "";
@@ -237,7 +238,8 @@ public sealed class PingTarget : IDisposable
 
     /// <summary>
     /// True when this target's tab is muted. Probing and recording continue exactly as normal;
-    /// only the notification is withheld — the same contract as a maintenance window.
+    /// only new notifications are withheld — the same contract as a maintenance window, including
+    /// that an outage announced before the mute still sends its recovery.
     /// </summary>
     public bool TabMuted { get; set; }
 
@@ -298,6 +300,66 @@ public sealed class PingTarget : IDisposable
     public bool HasReverseName
     {
         get { lock (_gate) return _reverseName is not null; }
+    }
+
+    /// <summary>Set while a reverse lookup is outstanding. See <see cref="TryBeginReverseLookup"/>.</summary>
+    private int _reverseInFlight;
+
+    /// <summary>
+    /// Claims the right to start a reverse lookup: true only for a target entered as a literal
+    /// address, with no name found yet and no lookup already running.
+    /// <para>
+    /// Without the claim, every successful probe launched another lookup until the first one
+    /// finished — at a 250 ms interval against a resolver taking its full 3 s timeout, a dozen
+    /// concurrent PTR queries per target. And a target entered by name never shows the reverse
+    /// result (<see cref="Snapshot"/> displays the name typed), so looking it up was pure waste.
+    /// </para>
+    /// </summary>
+    public bool TryBeginReverseLookup()
+    {
+        lock (_gate)
+        {
+            if (_reverseName is not null || !IPAddress.TryParse(Config.Address, out _)) return false;
+        }
+
+        return Interlocked.CompareExchange(ref _reverseInFlight, 1, 0) == 0;
+    }
+
+    public void EndReverseLookup() => Volatile.Write(ref _reverseInFlight, 0);
+
+    /// <summary>
+    /// Re-arms the "already announced" latch for an outage that was still open when the previous
+    /// run ended, so it can be closed by this one.
+    /// <para>
+    /// The latch lives only in memory, while the outage it describes is persisted. Without this, a
+    /// host that was down at shutdown and is back by the next launch never produced its recovery
+    /// — the outage read "ongoing" in the log indefinitely — and a host still down was announced a
+    /// second time. It is the restart counterpart of keeping the latch across a sleep.
+    /// </para>
+    /// </summary>
+    /// <param name="since">When the outage began, from the persisted transition.</param>
+    public void RestoreOpenOutage(TransitionKind kind, DateTimeOffset since, DateTimeOffset now)
+    {
+        var agoMs = (long)Math.Max(0, (now - since).TotalMilliseconds);
+        var sinceTick = Environment.TickCount64 - agoMs;
+
+        lock (_gate)
+        {
+            if (!IsActive) return;
+
+            switch (kind)
+            {
+                case TransitionKind.Hard:
+                    _downFired = true;
+                    _downSinceTick = sinceTick;
+                    break;
+
+                case TransitionKind.Degraded:
+                    _degradedFired = true;
+                    _degradedSinceTick = sinceTick;
+                    break;
+            }
+        }
     }
 
     public ProbeOptions OptionsFrom(Settings s) => new(
@@ -363,7 +425,12 @@ public sealed class PingTarget : IDisposable
     /// happened to be down at startup is retried in minutes rather than in hours.
     /// </param>
     /// <returns>A transition the first time expiry is within <paramref name="warnDays"/>, else null.</returns>
-    public StateTransition? SetCertificate(CertificateInfo info, int warnDays, int retryMinutes = 0)
+    /// <param name="quiet">
+    /// True inside a maintenance window or a muted tab. The reading is stored as usual, but the
+    /// warning is neither raised nor latched — latching it unannounced would have meant the
+    /// expiry was never mentioned at all until the certificate had been renewed.
+    /// </param>
+    public StateTransition? SetCertificate(CertificateInfo info, int warnDays, int retryMinutes = 0, bool quiet = false)
     {
         lock (_gate)
         {
@@ -381,7 +448,7 @@ public sealed class PingTarget : IDisposable
                 return null;
             }
 
-            if (_certWarned) return null;
+            if (_certWarned || quiet) return null;
             _certWarned = true;
 
             // DownFor carries time remaining rather than time elapsed for this kind — negative
@@ -471,7 +538,13 @@ public sealed class PingTarget : IDisposable
                 // from that first reply rather than green until the probe after it.
                 var degraded = EvaluateDegradedLocked(result, thresholds, raiseTransitions);
 
-                if (!wasDown || !raiseTransitions) { _downSinceTick = null; return degraded; }
+                // Deliberately not conditional on raiseTransitions. _downFired is only ever set by an
+                // announced outage, so wasDown means the user has already been told this host is
+                // down. Swallowing the recovery because a maintenance window or a tab mute began
+                // afterwards left that alert with no closing half, and left the outage reading
+                // "ongoing" in the log for ever — the same hole ForceStatus(Suspended) once had.
+                // Quiet stops new news, not the end of news already given.
+                if (!wasDown) { _downSinceTick = null; return degraded; }
 
                 var downFor = _downSinceTick is { } since
                     ? TimeSpan.FromMilliseconds(result.TickMs - since)
@@ -503,6 +576,22 @@ public sealed class PingTarget : IDisposable
 
                     // A target that has gone hard down is no longer merely degraded, and the next
                     // recovery should be free to announce degradation afresh.
+                    //
+                    // An announced degradation is closed explicitly rather than just forgotten:
+                    // clearing the latch alone left that episode open in the outage log for ever,
+                    // since nothing would ever emit its "cleared" half. The closing transition
+                    // carries the failure status, which marks it as superseded by the outage —
+                    // see StateTransition.IsSuperseded — so it is recorded but not announced.
+                    if (_degradedFired)
+                    {
+                        var lasted = _degradedSinceTick is { } since
+                            ? TimeSpan.FromMilliseconds(result.TickMs - since)
+                            : TimeSpan.Zero;
+                        soft = new StateTransition(
+                            Config.Name, Up: true, result.When, lasted, result.Status, 0,
+                            TransitionKind.Degraded);
+                    }
+
                     _degradedFired = false;
                     _degradedSinceTick = null;
 
@@ -534,9 +623,20 @@ public sealed class PingTarget : IDisposable
     {
         if (thresholds.IsOff)
         {
+            // Thresholds removed mid-episode, or between runs after RestoreOpenOutage re-armed the
+            // latch. Clearing it silently would strand the announced degradation open in the log
+            // for ever; the closing half is emitted as superseded (Status Unknown), because the
+            // host did not get better — the question simply stopped being asked.
+            var closing = _degradedFired
+                ? new StateTransition(
+                    Config.Name, Up: true, result.When,
+                    _degradedSinceTick is { } began ? TimeSpan.FromMilliseconds(result.TickMs - began) : TimeSpan.Zero,
+                    TargetStatus.Unknown, 0, TransitionKind.Degraded)
+                : (StateTransition?)null;
+
             _degradedSinceTick = null;
             _degradedFired = false;
-            return null;
+            return closing;
         }
 
         // Wait until the window can be filled from this run before judging anything. Restored
@@ -575,10 +675,11 @@ public sealed class PingTarget : IDisposable
         _degradedSinceTick = null;
         _degradedFired = false;
 
-        return raiseTransitions
-            ? new StateTransition(
-                Config.Name, Up: true, result.When, lasted, TargetStatus.Ok, 0, TransitionKind.Degraded)
-            : null;
+        // Raised even while quiet, for the same reason as a hard recovery: _degradedFired means
+        // the degradation was announced, and its closing half must not be lost to a window that
+        // opened afterwards.
+        return new StateTransition(
+            Config.Name, Up: true, result.When, lasted, TargetStatus.Ok, 0, TransitionKind.Degraded);
     }
 
     /// <summary>Minimum samples in the window before the degraded state may be entered at all.</summary>
@@ -793,7 +894,19 @@ public readonly record struct StateTransition(
     TimeSpan DownFor,
     TargetStatus Status,
     int Threshold,
-    TransitionKind Kind = TransitionKind.Hard);
+    TransitionKind Kind = TransitionKind.Hard)
+{
+    /// <summary>
+    /// A degraded episode that ended without the target getting better: it went hard down (the
+    /// failure status is carried), or its thresholds were removed (<see cref="TargetStatus.Unknown"/>).
+    /// <para>
+    /// Recorded — the outage log needs it, or the episode would stay open for ever — but never
+    /// announced: a "back to normal" message in the same second as "down" would be false. A genuine
+    /// recovery from degradation always carries <see cref="TargetStatus.Ok"/>.
+    /// </para>
+    /// </summary>
+    public bool IsSuperseded => Kind == TransitionKind.Degraded && Up && Status != TargetStatus.Ok;
+}
 
 /// <summary>What sort of change a <see cref="StateTransition"/> describes.</summary>
 public enum TransitionKind

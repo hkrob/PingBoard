@@ -173,6 +173,15 @@ for weeks.
 9. **Quiet suppresses the announcement, not the probe.** A muted tab or a maintenance window tells
    `Record` not to announce, and leaves the "already announced" flag clear — so a host still down
    when the quiet period ends alerts *then*, rather than never.
+   The converse is just as binding: **an announced episode always gets its closing half.** A
+   recovery of an outage (or a degradation) that was announced *before* the quiet began is raised
+   anyway; a hard outage closes an announced degradation with a *superseded* transition
+   (`StateTransition.IsSuperseded`: recorded for the log, never toasted or alerted); a certificate
+   warning read while quiet is not latched; and an outage open at shutdown re-arms its target's
+   latch on the next start (`PingTarget.RestoreOpenOutage`, called from
+   `MainViewModel.ResumeOpenOutages`). Breaking any of these leaves an outage reading "ongoing" in
+   the log for ever. Clearing a latch without emitting the transition that closes it is the bug
+   class to look for.
 10. **Soft transitions reuse the CSV's `event` column** (`degraded`, `degraded_cleared`,
     `cert_expiring`). A new column would put every older row under the wrong heading.
 11. **Secrets are DPAPI-protected on write and never logged.** An undecryptable value loads as empty.

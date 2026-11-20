@@ -150,9 +150,9 @@ internal static class Program
         new() { Name = "loopback",   Address = "127.0.0.1" },                       // always OK
         new() { Name = "test-net",   Address = "192.0.2.1" },                       // RFC 5737: never routes
         new() { Name = "bad-dns",    Address = "no-such-host.invalid" },            // DNS FAIL, not TIMEOUT
-        new() { Name = "gateway",    Address = "10.1.10.1" },
-        new() { Name = "hass-tcp",   Address = "10.1.10.12", Probe = ProbeKind.Tcp, Port = 8123 },
-        new() { Name = "gpu-box",    Address = "10.1.10.82" },
+        new() { Name = "dns-tcp",    Address = "1.1.1.1", Probe = ProbeKind.Tcp, Port = 53 },   // TCP path
+        new() { Name = "https",      Address = "example.com", Probe = ProbeKind.Https },       // HTTPS + cert read
+        new() { Name = "quad9",      Address = "9.9.9.9" },
         new() { Name = "google-dns", Address = "8.8.8.8" },
         new() { Name = "by-name",    Address = "one.one.one.one" },                 // forward resolution
     ];

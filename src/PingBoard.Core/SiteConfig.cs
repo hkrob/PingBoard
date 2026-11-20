@@ -1,7 +1,7 @@
 namespace PingBoard.Core;
 
 /// <summary>
-/// A physical location a target can be tagged with — "Connaught", "Northcliffe" — kept entirely
+/// A physical location a target can be tagged with — "Riverside", "Hillcrest" — kept entirely
 /// separate from <see cref="TabConfig"/>. A tab is a functional grouping chosen for the board
 /// ("Public DNS", "Large websites"); a site is a place. A tab can hold targets from several sites,
 /// and a site's targets can be spread across several tabs, so the two are orthogonal rather than
@@ -24,9 +24,9 @@ public sealed class SiteConfig
     public string Name { get; set; } = "";
 
     /// <summary>
-    /// Short form shown in the Site Abbreviation column, e.g. "Conn" for "Connaught". Defined once
+    /// Short form shown in the Site Abbreviation column, e.g. "Riv" for "Riverside". Defined once
     /// per site rather than typed per target, so every target at a site reads identically instead
-    /// of drifting between "Conn", "CONN" and "Connaught" depending on who added which host.
+    /// of drifting between "Riv", "RIV" and "Riverside" depending on who added which host.
     /// </summary>
     public string Abbreviation { get; set; } = "";
 

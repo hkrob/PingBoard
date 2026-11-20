@@ -299,15 +299,22 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         // the settings dialog takes effect immediately instead of at the next config reload.
         _alerts = new AlertDispatcher(_alertSettings ?? new AlertSettings());
 
+        // Before the scheduler starts: tab state decides which targets are probed at all, and the
+        // restored latches must be in place before the first result can be recorded — otherwise a
+        // fast failure (a refused TCP connect, with FailuresBeforeDown=1) could announce a
+        // still-down host a second time before its outage was re-armed.
+        BuildTabs(config.Tabs);
+        _sites = [.. config.Sites.Select(s => s.Clone())];
+
+        // After BuildTabs, which is what decides whether each target is active.
+        ResumeOpenOutages();
+
         _watcher = new SystemWatcher(_scheduler, _settings);
         _watcher.Start();
 
         _scheduler.Start();
         _refreshTimer.Start();
         _autosaveTimer.Start();
-
-        BuildTabs(config.Tabs);
-        _sites = [.. config.Sites.Select(s => s.Clone())];
 
         ApplySort();
         RefreshRows();
@@ -1194,6 +1201,27 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     }
 
     /// <summary>
+    /// Carries outages that were open when the previous run ended into this one: a target still
+    /// being watched gets its latch back, so its next good reply closes the outage and a reply
+    /// that is still failing does not announce it again; one that is gone or inactive has the
+    /// outage ended, since nothing will ever record its recovery. See
+    /// <see cref="PingTarget.RestoreOpenOutage"/>.
+    /// </summary>
+    private void ResumeOpenOutages()
+    {
+        var now = DateTimeOffset.Now;
+
+        foreach (var open in Journal.OpenOutages())
+        {
+            var target = Rows.FirstOrDefault(r => string.Equals(
+                r.Target.Config.Name, open.TargetName, StringComparison.OrdinalIgnoreCase))?.Target;
+
+            if (target is { IsActive: true }) target.RestoreOpenOutage(open.Kind, open.When, now);
+            else CloseOutagesFor(open.TargetName);
+        }
+    }
+
+    /// <summary>
     /// Ends any outage still open for a target the board is about to stop watching, in memory and
     /// in the outage file — see <see cref="TransitionJournal.CloseOpen"/>.
     /// </summary>
@@ -1232,8 +1260,15 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
     public void ResetStats(TargetRow? row = null)
     {
-        if (row is not null) row.Target.ResetStats();
-        else foreach (var r in Rows) r.Target.ResetStats();
+        // A reset clears each target's "already announced" latches, so any outage still open for
+        // it is ended first — otherwise nothing would ever record its recovery, and a host still
+        // down would be announced a second time.
+        TargetRow[] reset = row is not null ? [row] : [.. Rows];
+        foreach (var r in reset)
+        {
+            CloseOutagesFor(r.Target.Config.Name);
+            r.Target.ResetStats();
+        }
 
         _countersDirty = true;
         SaveCountersIfDirty();
