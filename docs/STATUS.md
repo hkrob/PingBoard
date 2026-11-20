@@ -66,9 +66,10 @@ These are believed to work and are not proven. Each has a way to settle it.
 
    This is the most important unverified claim: a monitor that cries wolf after every sleep gets
    ignored.
-2. **A fully successful run of `tools/retake-screenshots.ps1`.** Its refusal on a locked desktop and
-   its restore-after-failure path have **no automated test and no recorded manual run**; the successful capture path needs an unlocked desktop
-   and has not yet been seen to complete.
+2. **The failure paths of `tools/retake-screenshots.ps1`.** Its refusal on a locked desktop and
+   its restore-after-failure path have **no automated test and no recorded manual run**. (The
+   success path has: a full run on 2026-11-20 produced the current screenshots and restored
+   `ui-state.ini` byte-for-byte.)
 3. **A native ARM64 build.** The project pins `win-x64`; it should run under emulation on ARM64, but
    neither that nor a native build has been tried.
 4. **The scheduler's timing behaviour.** Phase-staggering targets across their interval and
@@ -89,11 +90,9 @@ These are believed to work and are not proven. Each has a way to settle it.
 
 - **Screenshots** cover the board, the right-click menu, the 7-day latency graph and the Matrix
   theme. None shows the tab strip, tag/site saved views, the settings or target dialogs, or the
-  outage log. The current set was taken on a Windows 11 VM at 300% scale by a one-off UI
-  Automation driver; **`tools/retake-screenshots.ps1` still produces only the original three**
-  (with a *Live* graph, and no menu shot), so running it would replace `board-detail.png` with a
-  different view and leave `board-menu.png` alone. Extending it means seeding a history sidecar
-  for the graph shot, as the README's caption describes.
+  outage log. All four are produced by `tools/retake-screenshots.ps1`; the set in the repository
+  is the output of a full successful run on a Windows 11 VM at 300% scale (Windows PowerShell 5.1,
+  2026-11-20). Not run under PowerShell 7, or at any other display scale.
 - **The installer is unsigned**, so SmartScreen warns on first run.
 - **The update check is unauthenticated** — GitHub allows 60 requests an hour per IP, shared by
   everything behind one router — and a private fork would see a 404. The app words both clearly.
