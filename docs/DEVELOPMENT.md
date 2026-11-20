@@ -97,20 +97,23 @@ network reaches an image. To regenerate `docs/screenshots/`:
 dotnet build PingBoard.slnx -c Release
 ```
 
-```bash
-pwsh tools/retake-screenshots.ps1
+```powershell
+powershell -File tools\retake-screenshots.ps1     # or: pwsh tools/retake-screenshots.ps1
 ```
 
-It launches the demo board, lets it build ~150 s of history, drives the UI to expand a row and
-switch theme, captures three images, and only then replaces the files in `docs/screenshots/`. It
-needs an unlocked desktop, and the demo window is visible on screen for a few minutes. The first
-two checks in the script (refusing when locked; restoring state after a failure) have no
-automated test and no recorded manual run; **a
-fully successful capture run has not yet been confirmed** — see [STATUS.md](STATUS.md).
+It launches the demo board, lets it build ~150 s of history, and captures four images: the board,
+a row's right-click menu, the Matrix theme, and a row expanded on its 7-day latency graph. The
+graph shot runs on a second copy of the board given a generated 30-day history sidecar (a demo
+board cannot build a week of real history in minutes), which is why the README captions it as
+illustrative. Only when all four succeed does it replace the files in `docs/screenshots/`, and
+images come out at twice the window's logical size, so the display scale does not matter.
 
-The set in the repository was last taken differently (see STATUS.md, *Known gaps*): it adds a
-right-click menu shot and a 7-day graph drawn from a seeded history, which this script does not
-yet do.
+It needs an unlocked desktop, takes about six minutes, and **uses the mouse**: before each capture
+it clicks the empty desktop just below the demo window (WinUI hides keyboard focus rectangles only
+after real pointer input), and the menu shot right-clicks a row. Leave the mouse alone while it
+runs; `-SkipMenu` skips the right-click and keeps the existing `board-menu.png`. The failure paths
+(refusing when locked; restoring state after a failure) have no automated test and no recorded
+manual run — see [STATUS.md](STATUS.md).
 
 Screenshots must stay free of anything real: the demo board's hosts only, and the title bar shows
 `demo.ini`.
