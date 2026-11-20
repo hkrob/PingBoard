@@ -143,6 +143,50 @@ public static class Export
     }
 
     /// <summary>
+    /// One row per target per hour over the last thirty days — the long-term record the graph's
+    /// 24h/7d/30d views draw from. Hours with no probes at all are omitted; an hour with probes but
+    /// no reply has its latency columns empty, never zero, since zero would read as a fast link.
+    /// <para>
+    /// A sheet of its own rather than more rows in <see cref="History"/>: that one is a row per
+    /// probe, this a row per hour, and mixing the two shapes gives a file that sorts by nothing.
+    /// </para>
+    /// </summary>
+    public static string Hourly(IEnumerable<PingTarget> targets, DateTimeOffset now)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("target,hour_start,samples,ok,loss_percent,min_ms,avg_ms,max_ms,p95_ms");
+
+        foreach (var target in targets)
+        {
+            var name = Escape(target.Config.Name);
+
+            foreach (var b in target.Availability.Series(AvailabilityLog.MaxHours, 1, now))
+            {
+                if (!b.HasData) continue;
+
+                sb.Append(name).Append(',')
+                  .Append(b.Start.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)).Append(',')
+                  .Append(b.Total.ToString(CultureInfo.InvariantCulture)).Append(',')
+                  .Append(b.Ok.ToString(CultureInfo.InvariantCulture)).Append(',')
+                  .Append(Number(b.LossPercent)).Append(',');
+
+                if (b.HasLatency)
+                {
+                    sb.Append(b.MinMs.ToString(CultureInfo.InvariantCulture)).Append(',')
+                      .Append(Number(b.AvgMs)).Append(',')
+                      .Append(b.MaxMs.ToString(CultureInfo.InvariantCulture)).Append(',')
+                      .Append(b.P95Ms.ToString(CultureInfo.InvariantCulture));
+                }
+                else sb.Append(",,,");
+
+                sb.AppendLine();
+            }
+        }
+
+        return sb.ToString();
+    }
+
+    /// <summary>
     /// Sortable, unambiguous, and understood by every spreadsheet — which round-trip "o" format is
     /// not, being rendered as text by most of them.
     /// </summary>

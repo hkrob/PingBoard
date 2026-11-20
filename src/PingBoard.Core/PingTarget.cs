@@ -517,7 +517,7 @@ public sealed class PingTarget : IDisposable
 
         lock (_gate)
         {
-            Availability.Record(result.Status, result.When);
+            Availability.Record(result.Status, result.When, result.HasRtt ? result.RttMs : -1);
             _history.Add(result);
             if (_samplesThisRun < int.MaxValue) _samplesThisRun++;
             _status = result.Status;

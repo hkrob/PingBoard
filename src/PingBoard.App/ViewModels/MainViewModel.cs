@@ -472,6 +472,8 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
     public string ExportHistory() => Export.History(_scheduler.Targets);
 
+    public string ExportHourly() => Export.Hourly(_scheduler.Targets, DateTimeOffset.Now);
+
     private void OnTransition(StateTransition transition)
     {
         _countersDirty = true;

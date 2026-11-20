@@ -204,6 +204,15 @@ public sealed partial class TargetRow : ObservableObject
     /// </summary>
     private static string FormatAvailability(double? percent) => AvailabilityLog.Format(percent);
 
+    /// <summary>
+    /// What the expanded latency graph shows: 0 the live per-probe window, 1–3 the last 24 hours,
+    /// 7 days and 30 days from the hourly record (<see cref="Controls.LatencyGraph.Ranges"/>).
+    /// Per row and not saved — it is a question asked of one host at a time, and a row that
+    /// reopened on a month-long view after a restart would hide the live picture people expand a
+    /// row to see.
+    /// </summary>
+    [ObservableProperty] public partial int GraphRange { get; set; }
+
     /// <summary>Bumped whenever history changes, so the sparkline knows to redraw.</summary>
     [ObservableProperty] public partial int HistoryVersion { get; private set; }
 

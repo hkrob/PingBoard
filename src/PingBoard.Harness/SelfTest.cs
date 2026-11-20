@@ -29,6 +29,7 @@ internal static class SelfTest
             HostCatalogIsUsable();
             WhileYouWereAway();
             AvailabilityOverDays();
+            LatencyOverDays(scratch);
             RingBufferRolls();
             RingBufferIgnoresInactiveSamples();
             RingBufferTimeoutIsInvisibleToMinMax();
@@ -459,6 +460,175 @@ internal static class SelfTest
 
         target.Dispose();
         other.Dispose();
+    }
+
+    /// <summary>
+    /// Hourly round-trip times over thirty days: what counts, the percentile, grouping into the
+    /// graph's wider bars, and persistence — including a sidecar written before the latency key
+    /// existed, which every upgraded install starts from.
+    /// </summary>
+    private static void LatencyOverDays(string dir)
+    {
+        // A fixed mid-hour instant in June, so no test straddles an hour boundary or a DST change
+        // in either hemisphere.
+        var now = new DateTimeOffset(2026, 6, 15, 12, 30, 0, TimeSpan.Zero);
+
+        var empty = new AvailabilityLog().Series(24, 1, now);
+        Check("latency: an empty log still returns one bucket per hour",
+            empty.Length == 24 && empty.All(b => !b.HasData && !b.HasLatency));
+
+        // Two hours ago: replies of 1..100 ms, plus five timeouts.
+        var log = new AvailabilityLog();
+        for (var rtt = 1; rtt <= 100; rtt++) log.Record(TargetStatus.Ok, now.AddHours(-2), rtt);
+        for (var i = 0; i < 5; i++) log.Record(TargetStatus.Timeout, now.AddHours(-2));
+
+        var hour = log.Series(24, 1, now)[^3];
+        Check("latency: an hour counts its probes and its replies separately",
+            hour.Total == 105 && hour.Ok == 100 && hour.RttCount == 100);
+        Check("latency: min and max are the extremes", hour.MinMs == 1 && hour.MaxMs == 100);
+        Check("latency: the average divides by replies, not by probes",
+            Math.Abs(hour.AvgMs - 50.5) < 0.001);
+        Check("latency: loss comes from the availability counts",
+            Math.Abs(hour.LossPercent - 100d * 5 / 105) < 0.001);
+
+        // The percentile has to follow a tail, which is what it is for. 95 fast replies and 5 slow
+        // ones: the 95th is still fast. One more slow one and it is not.
+        var tail = new AvailabilityLog();
+        for (var i = 0; i < 95; i++) tail.Record(TargetStatus.Ok, now, 10);
+        for (var i = 0; i < 5; i++) tail.Record(TargetStatus.Ok, now, 500);
+        Check("latency: p95 ignores a tail of exactly 5%", tail.Series(1, 1, now)[0].P95Ms == 10);
+
+        var heavier = new AvailabilityLog();
+        for (var i = 0; i < 94; i++) heavier.Record(TargetStatus.Ok, now, 10);
+        for (var i = 0; i < 6; i++) heavier.Record(TargetStatus.Ok, now, 500);
+        Check("latency: p95 lands in a tail of 6%", heavier.Series(1, 1, now)[0].P95Ms == 500);
+
+        // A bin edge above the data would claim a time nobody measured.
+        var single = new AvailabilityLog();
+        single.Record(TargetStatus.Ok, now, 7);
+        Check("latency: p95 is clamped to the observed range", single.Series(1, 1, now)[0].P95Ms == 7);
+
+        var p95 = hour.P95Ms;
+        Check("latency: p95 errs high by at most one bin step", p95 >= 95 && p95 <= 100);
+
+        // Only a reply has a round-trip time. A timeout carrying a stray RTT, and an inactive
+        // sample of any kind, must not reach the latency figures.
+        var picky = new AvailabilityLog();
+        picky.Record(TargetStatus.Timeout, now, 5);
+        picky.Record(TargetStatus.Paused, now, 5);
+        picky.Record(TargetStatus.Suspended, now, 5);
+        picky.Record(TargetStatus.Ok, now);
+        picky.Record(TargetStatus.Degraded, now, 300);
+        var only = picky.Series(1, 1, now)[0];
+        Check("latency: failures and inactive samples carry no round-trip time",
+            only.Total == 3 && only.RttCount == 1);
+        Check("latency: a degraded reply is still a reply", only.MinMs == 300 && only.MaxMs == 300);
+
+        // An hour with probes and no replies has availability and no latency — not a zero.
+        var dark = new AvailabilityLog();
+        dark.Record(TargetStatus.Timeout, now);
+        var darkHour = dark.Series(1, 1, now)[0];
+        Check("latency: an hour of failures has data but no latency",
+            darkHour.HasData && !darkHour.HasLatency && darkHour.LossPercent == 100);
+
+        // Grouping, as the 30-day graph does. Hours 1 and 3 back share the newest 4-hour bar.
+        var grouped = new AvailabilityLog();
+        for (var i = 0; i < 10; i++) grouped.Record(TargetStatus.Ok, now.AddHours(-1), 20);
+        for (var i = 0; i < 10; i++) grouped.Record(TargetStatus.Ok, now.AddHours(-3), 40);
+        var month = grouped.Series(AvailabilityLog.MaxHours, 4, now);
+        var bar = month[^1];
+        Check("latency: thirty days in 4-hour bars is 180 of them", month.Length == 180);
+        Check("latency: a group spans its hours", bar.Hours == 4 && bar.RttCount == 20);
+        Check("latency: a group's extremes and average merge correctly",
+            bar.MinMs == 20 && bar.MaxMs == 40 && Math.Abs(bar.AvgMs - 30) < 0.001);
+        // Averaging the two hourly p95s would say 30; the merged histogram knows better.
+        Check("latency: a group's p95 comes from the merged histogram, not averaged", bar.P95Ms == 40);
+        Check("latency: the hour before the newest group is in the one before it",
+            !month[^2].HasData);
+
+        var local = now.LocalDateTime;
+        Check("latency: the newest bucket starts on the current local hour",
+            log.Series(24, 1, now)[^1].Start == new DateTime(local.Year, local.Month, local.Day, local.Hour, 0, 0));
+
+        // A slot reused after thirty days must not mix last month's latency into this hour.
+        var reused = new AvailabilityLog();
+        reused.Record(TargetStatus.Ok, now.AddHours(-1 - AvailabilityLog.MaxHours), 900);
+        reused.Record(TargetStatus.Ok, now.AddHours(-1), 10);
+        var fresh = reused.Series(2, 1, now)[0];
+        Check("latency: a reused slot starts clean",
+            fresh.RttCount == 1 && fresh.MinMs == 10 && fresh.MaxMs == 10);
+
+        // Persistence.
+        log.Record(TargetStatus.Ok, now.AddHours(-30), 0);
+        var restored = AvailabilityLog.Decode(log.Encode());
+        restored.DecodeLatency(log.EncodeLatency());
+        Check("latency: survives an encode/decode round trip",
+            restored.Series(AvailabilityLog.MaxHours, 1, now).SequenceEqual(log.Series(AvailabilityLog.MaxHours, 1, now)));
+
+        var (stateAvailability, stateLatency) = log.EncodeState();
+        Check("latency: the sidecar pair is encoded together and matches the parts",
+            stateAvailability == log.Encode() && stateLatency == log.EncodeLatency());
+
+        var upgraded = AvailabilityLog.Decode(log.Encode());
+        Check("latency: a sidecar without latency keeps its availability",
+            upgraded.Percent(24, now) is { } pct && Math.Abs(pct - log.Percent(24, now)!.Value) < 0.001);
+        Check("latency: a sidecar without latency has none",
+            upgraded.Series(AvailabilityLog.MaxHours, 1, now).All(b => !b.HasLatency));
+
+        // Each corrupt entry differs from a valid one in exactly one way, so each is rejected for
+        // the reason its comment gives. The valid one — 100 replies at 10 ms, two hours back, where
+        // availability holds 100 successful probes — must itself be accepted.
+        var h = (long)Math.Floor(now.AddHours(-2).LocalDateTime.Subtract(DateTime.UnixEpoch).TotalHours);
+        var control = AvailabilityLog.Decode(log.Encode());
+        control.DecodeLatency($"{h}:10:10:1000:8.100");
+        Check("latency: a valid hand-written entry is accepted",
+            control.Series(24, 1, now)[^3] is { RttCount: 100, MinMs: 10, MaxMs: 10, P95Ms: 10 });
+
+        string[] corrupt =
+        [
+            "junk",
+            $"{h}:10:10:1000",            // too few fields
+            $"{h}:10:5:1000:8.100",       // max below min
+            $"{h}:10:10:1000:99.100",     // bin out of range
+            $"{h}:10:10:999:8.100",       // sum below min × count
+            $"{h}:10:10:1000:",           // no bins
+            $"{h}:10:10:1000:8.50/8.50",  // a bin given twice
+            $"{h}:10:10:1000:9.100",      // bins disagree with min and max
+            $"{h}:10:10:1010:8.101",      // more replies than successful probes
+            "1:10:10:1000:8.100",         // an hour availability never saw
+        ];
+
+        foreach (var bad in corrupt)
+        {
+            var target = AvailabilityLog.Decode(log.Encode());
+            target.DecodeLatency(bad);
+            Check($"latency: corrupt entry '{bad.Replace(h.ToString(System.Globalization.CultureInfo.InvariantCulture), "h", StringComparison.Ordinal)}' is rejected",
+                target.Series(AvailabilityLog.MaxHours, 1, now).All(b => !b.HasLatency));
+        }
+
+        restored.Clear();
+        Check("latency: reset clears it", restored.Series(AvailabilityLog.MaxHours, 1, now).All(b => !b.HasData));
+
+        // Through the real sidecar, and through one with the latency line removed — the shape of
+        // every state file written before 1.12.
+        var statePath = ConfigStore.StatePathFor(Path.Combine(dir, "latency.ini"));
+        using var probe = new PingTarget(new TargetConfig { Name = "gw", Address = "192.0.2.1" }, new Settings());
+        var stamp = DateTimeOffset.Now;
+        for (var i = 1; i <= 20; i++)
+            probe.Record(ProbeResult.Ok(i, System.Net.IPAddress.Loopback, i, stamp), 3);
+
+        StateStore.Save(statePath, [probe]);
+        var loaded = StateStore.LoadAvailability(statePath);
+        Check("latency: the sidecar carries it",
+            loaded.TryGetValue("gw", out var back)
+            && back.Series(24, 1, stamp)[^1] is { RttCount: 20, MinMs: 1, MaxMs: 20 });
+
+        var lines = File.ReadAllLines(statePath).Where(l => !l.StartsWith("Latency", StringComparison.Ordinal));
+        File.WriteAllLines(statePath, lines);
+        var old = StateStore.LoadAvailability(statePath);
+        Check("latency: a pre-1.12 sidecar loads availability without latency",
+            old.TryGetValue("gw", out var oldLog)
+            && oldLog.Series(24, 1, stamp)[^1] is { Total: 20, RttCount: 0 });
     }
 
     /// <summary>Availability over hours and days, and its persistence.</summary>
@@ -2624,6 +2794,24 @@ internal static class SelfTest
         var history = Export.History([target]);
         Check("export: history writes one row per retained sample",
             history.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length == 11);
+
+        // The hourly sheet: one row per hour that saw a probe, and an hour of failures with its
+        // latency columns empty rather than zero.
+        target.Record(ProbeResult.Fail(TargetStatus.Timeout, 20_000, now.AddHours(-5)), 3);
+        var hourly = Export.Hourly([target], now)
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(l => l.TrimEnd('\r'))
+            .ToArray();
+
+        Check("export: hourly writes a header and one row per active hour", hourly.Length == 3);
+        Check("export: hourly names the percentile column",
+            hourly[0].EndsWith(",p95_ms", StringComparison.Ordinal));
+        Check("export: every hourly row has as many fields as the header",
+            hourly.Skip(1).All(l => CountFields(l) == CountFields(hourly[0])));
+        Check("export: an hour with no reply leaves the latency columns empty",
+            hourly[1].EndsWith(",1,0,100,,,,", StringComparison.Ordinal));
+        Check("export: an hour of replies carries min/avg/max/p95",
+            hourly[2].EndsWith(",10,10,0,20,24.5,29,29", StringComparison.Ordinal));
 
         var outages = Export.Outages(
         [

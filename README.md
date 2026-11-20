@@ -5,8 +5,8 @@
 An always-on ping monitor for Windows 11. Watches a list of hosts, shows what is up and what is
 down, and keeps enough history to tell you *how* something is failing rather than just that it is.
 
-ICMP, TCP and HTTP(S) probes. Per-host history and latency graphs, jitter, and rolling 24h/7d/30d
-availability. A traceroute captured automatically at the moment something goes down, so the
+ICMP, TCP and HTTP(S) probes. Per-host history and latency graphs, jitter, rolling 24h/7d/30d
+availability, and thirty days of hourly min/avg/max/~p95 round-trip times. A traceroute captured automatically at the moment something goes down, so the
 evidence exists before you go looking. Hosts grouped into tabs that can be muted or disabled
 independently, maintenance windows that suppress expected outages, and webhook or email alerts for
 the ones that aren't. Lives in the tray and can start with Windows.
@@ -94,7 +94,7 @@ structurally — it is a separate project — so the part that has to be correct
 stress-tested without XAML in the way.
 
 ```bash
-dotnet run --project src/PingBoard.Harness -- --selftest        # 470 assertions
+dotnet run --project src/PingBoard.Harness -- --selftest        # 512 assertions
 dotnet run --project src/PingBoard.Harness -- board.ini --seconds 300
 ```
 
@@ -144,6 +144,11 @@ back populated after a restart rather than spending the next five minutes fillin
 and round-trip time are kept, because only those are read back — the timestamps are dropped
 deliberately, since a monotonic tick from a process that has exited means nothing and both charts
 plot by index anyway.
+
+Each hour of the thirty-day availability record also carries that hour's round-trip times — reply
+count, min, max, sum and a 32-bin histogram — under a separate `Latency` key, so the 24h/7d/30d
+latency views and the Hourly export survive a restart too. A sidecar from before 1.12 simply has
+no such key and loads with its availability intact.
 
 `Probe=tcp` exists because plenty of hosts and most corporate firewalls drop ICMP silently, which
 would otherwise read as a permanently dead target. A completed TCP handshake also proves more than
@@ -442,7 +447,7 @@ need.
 
 ### Export
 
-⚙ → **Export…**, in three shapes, because they answer different questions and merging them would
+⚙ → **Export…**, in four shapes, because they answer different questions and merging them would
 give a spreadsheet that cannot usefully be sorted by anything:
 
 | | |
@@ -450,6 +455,7 @@ give a spreadsheet that cannot usefully be sorted by anything:
 | **Board** | one row per target — status, latency, jitter, loss, 24h/7d/30d availability, certificate |
 | **Outages** | one row per outage, with start, end and duration |
 | **History** | one row per retained probe sample |
+| **Hourly** | one row per target per hour for thirty days — probes, loss, min/avg/max/~p95 round-trip time |
 
 The point is usually not analysis, it is evidence: an ISP or a supplier disputing that anything was
 ever wrong, answered with a file listing every drop and its duration rather than a screenshot of a
@@ -607,6 +613,20 @@ failures as full-height blocks, with min/avg/max gridlines. The sparkline tells 
 problem in 44 bars; the graph tells you *how much*, against what baseline. A link that normally sits
 at 8 ms and is now at 40 ms is not down and loses no packets — every other column reads healthy, and
 only a plot scaled to its own history shows it.
+
+A selector above the graph switches it from **Live** to **24 hours**, **7 days** or **30 days**,
+drawn from the hourly record: one bar per hour (per four hours at 30 days), the solid part the
+average, a lighter extension up to the ~95th percentile and a tick at the maximum. A red strip
+marks an hour that lost probes; an hour with no reply at all is a full-height failure bar, and an
+hour with no probes — the machine was off — is left empty. The scale is the period's highest p95,
+not its highest maximum, so one 2-second spike cannot flatten a month of 10 ms bars; the caption
+gives the period's own average, p95, maximum and loss. The choice is per row and resets to Live
+on restart.
+
+The p95 is approximate: it is read from a fixed histogram whose bins are roughly 25–35% apart
+above 10 ms, and reported as the upper edge of the bin it falls in, so it errs high by up to one
+step and never exceeds the observed maximum. Hours are local wall-clock hours, so the hour
+repeated when the clocks go back is merged into one bucket, as it already is for availability.
 
 ---
 

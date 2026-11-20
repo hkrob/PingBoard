@@ -525,7 +525,7 @@ public static class StateStore
 {
     private const string Header =
         "PingBoard persisted counters and probe history. Generated file — safe to delete.\n" +
-        "Deleting it resets all statistics, including the sparkline and latency graph.";
+        "Deleting it resets all statistics, including the sparkline, latency graph and 30-day history.";
 
     /// <summary>
     /// Encodes retained probe history as <c>status:rtt</c> pairs.
@@ -642,8 +642,9 @@ public static class StateStore
     }
 
     /// <summary>
-    /// Hourly availability buckets per target name, for the 24h/7d/30d figures. Empty when the
-    /// sidecar predates them.
+    /// Hourly availability buckets per target name, for the 24h/7d/30d figures, with each hour's
+    /// latency where the sidecar has it. Empty when the sidecar predates availability; a sidecar
+    /// from before 1.12 has no <c>Latency</c> key and loads with availability alone.
     /// </summary>
     public static Dictionary<string, AvailabilityLog> LoadAvailability(string path)
     {
@@ -663,7 +664,9 @@ public static class StateStore
             var encoded = section.GetString(AvailabilityKey, "");
             if (encoded.Length == 0) continue;
 
-            result[name] = AvailabilityLog.Decode(encoded);
+            var log = AvailabilityLog.Decode(encoded);
+            log.DecodeLatency(section.GetString(LatencyKey, ""));
+            result[name] = log;
         }
 
         return result;
@@ -671,6 +674,7 @@ public static class StateStore
 
     private const string HistoryKey = "History";
     private const string AvailabilityKey = "Availability";
+    private const string LatencyKey = "Latency";
 
     public static void Save(string path, IEnumerable<PingTarget> targets)
     {
@@ -695,8 +699,11 @@ public static class StateStore
             var history = target.HistorySnapshot();
             if (history.Length > 0) section.Set(HistoryKey, EncodeHistory(history));
 
-            var availability = target.Availability.Encode();
+            // One call, so a reply landing mid-save cannot leave the two out of step (see
+            // AvailabilityLog.EncodeState).
+            var (availability, latency) = target.Availability.EncodeState();
             if (availability.Length > 0) section.Set(AvailabilityKey, availability);
+            if (latency.Length > 0) section.Set(LatencyKey, latency);
         }
 
         ini.SaveAtomic(path);
