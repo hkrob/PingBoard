@@ -28,6 +28,12 @@ with a 24h/7d/30d graph and an Hourly export. Nothing in that list is stubbed.
   its bin error, grouping into 4-hour bars from merged histograms, slot reuse after thirty days,
   the `Latency` sidecar key round-tripping, a pre-1.12 sidecar loading without it, rejection of
   corrupt entries, and the Hourly export.
+- **The 24h/7d/30d latency graph and the Hourly export, in the real app** (1.12, on a Windows 11
+  VM, driven by UI Automation against a demo board seeded with 30 days of synthetic hourly
+  history): every range drew with the right caption, the window stayed responsive (no
+  `LayoutCycleException` freeze) through switching and collapse/expand, a second row opened on
+  Live independently, and Export → Hourly wrote the CSV through the real file picker, with an
+  hour of failures exporting empty latency columns.
 - **Suspend/resume logic** — that counters freeze, failure streaks clear, nothing is announced while
   suspended, an outage announced before sleep stays open, and a recovery is alerted on wake.
 - **Every announced episode closes** — a recovery inside a maintenance window or a muted tab, a
@@ -38,9 +44,10 @@ with a 24h/7d/30d graph and an Hourly export. Nothing in that list is stubbed.
 - **Memory.** An early soak (24 targets, ~48 probes/s, about 20 000 probes) held the managed heap
   flat at under 1 MB; the history rings are fixed-size by construction. It was measured on an early
   build — re-run the harness for a few minutes after any change to the engine's hot path.
-  **Not re-run for 1.12**, which added hourly latency to every probe's path: the harness cannot run
-  a board on the Linux host that change was made on. The baseline is higher by construction —
-  about 118 KB of preallocated hourly buckets per target — and should still be flat.
+  Re-run for 1.12, which added hourly latency to every probe's path: the demo board (8 targets,
+  1 s interval) for 5 minutes on Windows 11 held the managed heap flat at 1.6 MB and the working
+  set at 52–55 MB. The baseline is higher by construction — about 118 KB of preallocated hourly
+  buckets per target.
 
 ## Not verified
 
@@ -77,14 +84,6 @@ These are believed to work and are not proven. Each has a way to settle it.
    deployment (it needs a resource DLL that ships only with the installed framework runtime), so the
    app always falls back to a tray balloon, which Windows 11 renders as an ordinary toast. The
    toast code path itself is therefore not exercised in the shipped configuration.
-7. **The 24h/7d/30d latency graph, as drawn.** The data behind it is self-tested; the view itself
-   (`LatencyGraph`'s long-range mode and the selector in `BoardView.xaml`) was written on a Linux
-   host where the WinUI project cannot build, so it has been compiled by CI and never seen on
-   screen. To settle it: expand a row on a board with a few hours of history and switch through
-   Live / 24 hours / 7 days / 30 days. Expect bars only for hours with probes, a lighter p95 band
-   above each average, red strips on hours with loss, a caption with avg/~p95/max/loss, and no
-   layout freeze (the `LayoutCycleException` symptom: the window stops responding to clicks).
-   Also run **Export… → Hourly** and open the CSV.
 
 ## Known gaps
 
