@@ -29,6 +29,12 @@ dotnet run --project src/PingBoard.App
 If `dotnet` is not found from an agent shell, it is in `C:\Program Files\dotnet` — prepend that to
 `PATH`. CI (`.github/workflows/ci.yml`) runs the first two on every push to `main` and every pull request to `main`; keep it green.
 
+On the Linux container: `PingBoard.Core` and `PingBoard.Harness` build. `--selftest` stops at the first
+DPAPI test (Windows only); to run the rest you can skip that call temporarily, but revert it before
+committing. The Harness can't run a board (`SystemEvents` is Windows only), so no soak here.
+`PingBoard.App` can't be built at all (the WinUI XAML compiler is Windows only). The VM or CI
+(`windows-latest`) is the first real compile and full self-test run; say which in the commit and STATUS.md.
+
 ## The rules
 
 - **`src/PingBoard.Core` references no UI type, ever.** It is a separate project so this is a
@@ -60,6 +66,7 @@ The full list, with the reason behind each, is in ARCHITECTURE.md.
 
 ## Hazards that have already bitten
 
+- The checkout is synced by Resilio, which ignores `.git`, so it can be behind origin. `git fetch` and compare with `origin/main` before work; fast-forward only, never force-push.
 - **Launching the app against a scratch board rewrites `%AppData%\PingBoard\ui-state.ini`**, which
   the installed copy reads on its next start. Back it up and restore it, or use
   `tools/retake-screenshots.ps1` as the model. Details: DEVELOPMENT.md → *The UI-state hazard*.
